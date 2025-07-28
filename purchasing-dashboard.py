@@ -98,22 +98,22 @@ def fetch_set_data(set_number, auth):
         "Category ID": metadata.get("Category ID", "N/A"),
 
         # Current New
-        "Current Avg (New)": f"${float(current_new.get('avg_price', 0)):.2f}" if current_new.get("avg_price") else "N/A",
+        "Current Avg Price (New)": f"${float(current_new.get('avg_price', 0)):.2f}" if current_new.get("avg_price") else "N/A",
         "Qty (New)": current_new.get("total_quantity", "N/A"),
         "Lots (New)": current_new.get("unit_quantity", "N/A"),
 
         # Current Used
-        "Current Avg (Used)": f"${float(current_used.get('avg_price', 0)):.2f}" if current_used.get("avg_price") else "N/A",
+        "Current Avg Price (Used)": f"${float(current_used.get('avg_price', 0)):.2f}" if current_used.get("avg_price") else "N/A",
         "Qty (Used)": current_used.get("total_quantity", "N/A"),
         "Lots (Used)": current_used.get("unit_quantity", "N/A"),
 
-        # Sold New
-        "Sold Avg (New)": f"${float(sold_new.get('avg_price', 0)):.2f}" if sold_new.get("avg_price") else "N/A",
+        # Last 6 months Sales New
+        "Last 6 Months Sales - Avg Price (New)": f"${float(sold_new.get('avg_price', 0)):.2f}" if sold_new.get("avg_price") else "N/A",
         "Sold Qty (New)": sold_new.get("total_quantity", "N/A"),
         "Times Sold (New)": sold_new.get("unit_quantity", "N/A"),
 
         # Sold Used
-        "Sold Avg (Used)": f"${float(sold_used.get('avg_price', 0)):.2f}" if sold_used.get("avg_price") else "N/A",
+        "Last 6 Months Sales - Avg Price (Used)": f"${float(sold_used.get('avg_price', 0)):.2f}" if sold_used.get("avg_price") else "N/A",
         "Sold Qty (Used)": sold_used.get("total_quantity", "N/A"),
         "Times Sold (Used)": sold_used.get("unit_quantity", "N/A"),
     }
