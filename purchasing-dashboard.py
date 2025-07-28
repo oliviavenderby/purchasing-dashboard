@@ -15,7 +15,7 @@ token_secret = st.sidebar.text_input("Token Secret", type="password")
 # -----------------------------
 # 🧱 Main App Interface
 # -----------------------------
-st.title("🧱 LEGO Set Summary Table (BrickLink API)")
+st.title("🧱 LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
@@ -52,9 +52,12 @@ def fetch_set_data(set_number, auth):
             new_data = new_resp.json().get("data", {})
             used_data = used_resp.json().get("data", {})
 
+            set_name = metadata.get("Set Name", "N/A")
+            link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
+
             return {
                 "Set Number": set_number,
-                "Set Name": metadata.get("Set Name", "N/A"),
+                "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
                 "Category ID": metadata.get("Category ID", "N/A"),
                 "Avg Price (New)": f"${float(new_data.get('avg_price', 0)):.2f}" if new_data.get("avg_price") else "N/A",
                 "Qty (New)": new_data.get("total_quantity", "N/A"),
@@ -62,7 +65,6 @@ def fetch_set_data(set_number, auth):
                 "Avg Price (Used)": f"${float(used_data.get('avg_price', 0)):.2f}" if used_data.get("avg_price") else "N/A",
                 "Qty (Used)": used_data.get("total_quantity", "N/A"),
                 "Lots (Used)": used_data.get("unit_quantity", "N/A"),
-                "BrickLink Page": f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
             }
     except Exception:
         return {
@@ -74,12 +76,10 @@ def fetch_set_data(set_number, auth):
             "Lots (New)": "Error",
             "Avg Price (Used)": "Error",
             "Qty (Used)": "Error",
-            "Lots (Used)": "Error",
-            "BrickLink Page": "Error"
+            "Lots (Used)": "Error"
         }
 
     return None
-
 
 # -----------------------------
 # 🚀 Fetch and Display
@@ -100,7 +100,9 @@ if st.button("Fetch Data for Sets"):
         if results:
             df = pd.DataFrame(results)
             st.success("✅ Data loaded successfully")
-            st.dataframe(df)
+
+            st.markdown("📎 Click a set name to view on BrickLink:")
+            st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
         else:
             st.warning("No valid results found.")
     else:
