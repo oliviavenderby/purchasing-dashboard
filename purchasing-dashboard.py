@@ -88,7 +88,12 @@ if st.button("Fetch Data for Sets"):
     if all([consumer_key, consumer_secret, token, token_secret, set_input]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
 
-        set_numbers = [s.strip() for s in set_input.split(",") if s.strip()]
+        # Normalize to ensure each set has -1 at the end (if not already present)
+        def normalize_set_number(s):
+            s = s.strip()
+            return s if "-" in s else f"{s}-1"
+        
+        set_numbers = [normalize_set_number(s) for s in set_input.split(",") if s.strip()]
         results = []
 
         with st.spinner("Fetching BrickLink data..."):
