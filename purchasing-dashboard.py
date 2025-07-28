@@ -47,7 +47,10 @@ if fetch_clicked:
 
             with col2:
                 st.markdown("**🟠 Used Condition**")
-                st.metric("Avg Price (Used)", f"${used_data['avg_price']:.2f}")
+                if avg_price_used is not None:
+                    st.metric("Avg Price (Used)", f"${float['avg_price_used']:.2f}")
+                else:
+                    st.warning("No average price (used) available.")
                 st.metric("Total Qty Sold (Used)", used_data['total_quantity'])
                 st.metric("Total Sales (Used)", used_data['unit_quantity'])
 
