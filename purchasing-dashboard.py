@@ -92,7 +92,7 @@ def fetch_set_data(set_number, auth):
     link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
 
     return {
-        "Set Image": f'<img src="{image_url}" width="100"/>',
+        "Set Image": f'<img src="{image_url}" width="300"/>',
         "Set Number": set_number,
         "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
         "Category ID": metadata.get("Category ID", "N/A"),
