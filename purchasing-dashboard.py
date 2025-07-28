@@ -19,6 +19,13 @@ st.title("🧱 LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
+# 🔧 Normalize Set Number
+# -----------------------------
+def normalize_set_number(s):
+    s = s.strip()
+    return s if "-" in s else f"{s}-1"
+
+# -----------------------------
 # 🧩 Fetch Set Metadata
 # -----------------------------
 def fetch_set_metadata(set_number, auth):
@@ -42,6 +49,7 @@ def fetch_set_metadata(set_number, auth):
 # 📦 Fetch Price Guide Data
 # -----------------------------
 def fetch_set_data(set_number, auth):
+    set_number = normalize_set_number(set_number)
     base_url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
     try:
         new_resp = requests.get(base_url + "?new_or_used=N", auth=auth)
@@ -88,12 +96,8 @@ if st.button("Fetch Data for Sets"):
     if all([consumer_key, consumer_secret, token, token_secret, set_input]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
 
-        # Normalize to ensure each set has -1 at the end (if not already present)
-        def normalize_set_number(s):
-            s = s.strip()
-            return s if "-" in s else f"{s}-1"
-        
-        set_numbers = [normalize_set_number(s) for s in set_input.split(",") if s.strip()]
+        set_raw_list = [s.strip() for s in set_input.split(",") if s.strip()]
+        set_numbers = [normalize_set_number(s) for s in set_raw_list]
         results = []
 
         with st.spinner("Fetching BrickLink data..."):
@@ -105,7 +109,6 @@ if st.button("Fetch Data for Sets"):
         if results:
             df = pd.DataFrame(results)
             st.success("✅ Data loaded successfully")
-
             st.markdown("📎 Click a set name to view on BrickLink:")
             st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
         else:
@@ -118,3 +121,4 @@ if st.button("Fetch Data for Sets"):
 # -----------------------------
 st.markdown("---")
 st.caption("Powered by BrickLink API • Created by ReUseBricks")
+
