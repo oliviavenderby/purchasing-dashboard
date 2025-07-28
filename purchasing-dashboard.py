@@ -15,64 +15,69 @@ token_secret = st.sidebar.text_input("Token Secret", type="password")
 # -----------------------------
 # 🧱 Main App Interface
 # -----------------------------
-st.title("🧱 LEGO Set Price Lookup")
-set_number = st.text_input("Enter LEGO Set Number (e.g., 10276):")
+st.title("🧱 LEGO Price Summary Table")
+
+set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
-# 🚀 Button & API Logic
+# 📊 Fetch + Build Summary Table
 # -----------------------------
-if st.button("Fetch Price Data"):
-    if all([consumer_key, consumer_secret, token, token_secret, set_number]):
+def fetch_set_data(set_number, auth):
+    base_url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
+    try:
+        new_resp = requests.get(base_url + "?new_or_used=N", auth=auth)
+        used_resp = requests.get(base_url + "?new_or_used=U", auth=auth)
+
+        if new_resp.status_code == 200 and used_resp.status_code == 200:
+            new_data = new_resp.json().get("data", {})
+            used_data = used_resp.json().get("data", {})
+
+            return {
+                "Set Number": set_number,
+                "Avg Price (New)": f"${float(new_data.get('avg_price', 0)):.2f}" if new_data.get("avg_price") else "N/A",
+                "Qty (New)": new_data.get("total_quantity", "N/A"),
+                "Lots (New)": new_data.get("unit_quantity", "N/A"),
+                "Avg Price (Used)": f"${float(used_data.get('avg_price', 0)):.2f}" if used_data.get("avg_price") else "N/A",
+                "Qty (Used)": used_data.get("total_quantity", "N/A"),
+                "Lots (Used)": used_data.get("unit_quantity", "N/A"),
+            }
+    except Exception as e:
+        return {
+            "Set Number": set_number,
+            "Avg Price (New)": "Error",
+            "Qty (New)": "Error",
+            "Lots (New)": "Error",
+            "Avg Price (Used)": "Error",
+            "Qty (Used)": "Error",
+            "Lots (Used)": "Error"
+        }
+
+    return None
+
+# -----------------------------
+# 🚀 Run Fetch if Button Pressed
+# -----------------------------
+if st.button("Fetch Data for Sets"):
+    if all([consumer_key, consumer_secret, token, token_secret, set_input]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
-        url_base = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
 
-        # Fetch NEW and USED price data
-        with st.spinner("Fetching NEW price data..."):
-            response_new = requests.get(url_base + "?new_or_used=N", auth=auth)
-        with st.spinner("Fetching USED price data..."):
-            response_used = requests.get(url_base + "?new_or_used=U", auth=auth)
+        set_numbers = [s.strip() for s in set_input.split(",") if s.strip()]
+        results = []
 
-        # If both successful
-        if response_new.status_code == 200 and response_used.status_code == 200:
-            new_data = response_new.json().get("data", {})
-            used_data = response_used.json().get("data", {})
+        with st.spinner("Fetching BrickLink data..."):
+            for set_number in set_numbers:
+                data = fetch_set_data(set_number, auth)
+                if data:
+                    results.append(data)
 
-            st.subheader(f"💸 Price Guide for Set {set_number}")
-
-            # Build a DataFrame to compare NEW and USED data
-            summary_data = pd.DataFrame({
-                "Metric": [
-                    "BL recent Avg Price",
-                    "BL Number Sales",
-                    "BL Total Qty Sold"
-                ],
-                "New": [
-                    f"${new_data.get('avg_price', 'N/A')}",
-                    new_data.get("unit_quantity", "N/A"),
-                    new_data.get("total_quantity", "N/A")
-                ],
-                "Used": [
-                    f"${used_data.get('avg_price', 'N/A')}",
-                    used_data.get("unit_quantity", "N/A"),
-                    used_data.get("total_quantity", "N/A")
-                ]
-            })
-
-            st.dataframe(summary_data.set_index("Metric"))
-
-            # Optionally expand raw data for debugging
-            with st.expander("🔍 Raw API Data"):
-                st.json({
-                    "new_data": new_data,
-                    "used_data": used_data
-                })
-
+        if results:
+            df = pd.DataFrame(results)
+            st.success("✅ Data loaded successfully")
+            st.dataframe(df)
         else:
-            st.error("Failed to fetch one or both data types from BrickLink API.")
-            st.write("New response code:", response_new.status_code)
-            st.write("Used response code:", response_used.status_code)
+            st.warning("No valid results found.")
     else:
-        st.warning("Please fill in all API credentials and a valid set number.")
+        st.warning("Please enter your BrickLink credentials and at least one set number.")
 
 # -----------------------------
 # 🧾 Footer
