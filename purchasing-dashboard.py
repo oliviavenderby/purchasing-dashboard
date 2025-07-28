@@ -4,18 +4,18 @@ from requests_oauthlib import OAuth1
 import pandas as pd
 
 # -----------------------------
-# 🔐 Sidebar: API Credentials
+# Sidebar: API Credentials
 # -----------------------------
-st.sidebar.header("🔑 BrickLink API Credentials")
+st.sidebar.header("BrickLink API Credentials")
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
-# 🧱 Main App Interface
+# Main App Interface
 # -----------------------------
-st.title("🧱 LEGO Set Price Summary (BrickLink API)")
+st.title("LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
