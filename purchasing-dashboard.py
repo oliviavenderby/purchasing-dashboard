@@ -15,18 +15,38 @@ token_secret = st.sidebar.text_input("Token Secret", type="password")
 # -----------------------------
 # 🧱 Main App Interface
 # -----------------------------
-st.title("🧱 LEGO Price Summary Table")
-
+st.title("🧱 LEGO Set Summary Table (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
-# 📊 Fetch + Build Summary Table
+# 🧩 Fetch Set Metadata
+# -----------------------------
+def fetch_set_metadata(set_number, auth):
+    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
+    try:
+        resp = requests.get(url, auth=auth)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            return {
+                "Set Name": data.get("name", "N/A"),
+                "Category ID": data.get("category_id", "N/A")
+            }
+    except Exception:
+        return {
+            "Set Name": "Error",
+            "Category ID": "Error"
+        }
+    return None
+
+# -----------------------------
+# 📦 Fetch Price Guide Data
 # -----------------------------
 def fetch_set_data(set_number, auth):
     base_url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
     try:
         new_resp = requests.get(base_url + "?new_or_used=N", auth=auth)
         used_resp = requests.get(base_url + "?new_or_used=U", auth=auth)
+        metadata = fetch_set_metadata(set_number, auth)
 
         if new_resp.status_code == 200 and used_resp.status_code == 200:
             new_data = new_resp.json().get("data", {})
@@ -34,6 +54,8 @@ def fetch_set_data(set_number, auth):
 
             return {
                 "Set Number": set_number,
+                "Set Name": metadata.get("Set Name", "N/A"),
+                "Category ID": metadata.get("Category ID", "N/A"),
                 "Avg Price (New)": f"${float(new_data.get('avg_price', 0)):.2f}" if new_data.get("avg_price") else "N/A",
                 "Qty (New)": new_data.get("total_quantity", "N/A"),
                 "Lots (New)": new_data.get("unit_quantity", "N/A"),
@@ -41,9 +63,11 @@ def fetch_set_data(set_number, auth):
                 "Qty (Used)": used_data.get("total_quantity", "N/A"),
                 "Lots (Used)": used_data.get("unit_quantity", "N/A"),
             }
-    except Exception as e:
+    except Exception:
         return {
             "Set Number": set_number,
+            "Set Name": "Error",
+            "Category ID": "Error",
             "Avg Price (New)": "Error",
             "Qty (New)": "Error",
             "Lots (New)": "Error",
@@ -55,7 +79,7 @@ def fetch_set_data(set_number, auth):
     return None
 
 # -----------------------------
-# 🚀 Run Fetch if Button Pressed
+# 🚀 Fetch and Display
 # -----------------------------
 if st.button("Fetch Data for Sets"):
     if all([consumer_key, consumer_secret, token, token_secret, set_input]):
