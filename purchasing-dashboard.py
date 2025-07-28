@@ -54,6 +54,14 @@ if fetch_clicked:
     else:
         st.warning("Please fill in all API credentials and a set number.")
 
+with st.expander("🔍 API Debug Info"):
+    st.write("Status code:", response.status_code)
+    try:
+        st.json(response.json())
+    except Exception as e:
+        st.write("Failed to parse JSON:", e)
+
+
 # Footer
 st.markdown("---")
 st.caption("Powered by BrickLink API • Streamlit App by ReUseBricks")
