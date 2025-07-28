@@ -62,6 +62,7 @@ def fetch_set_data(set_number, auth):
                 "Avg Price (Used)": f"${float(used_data.get('avg_price', 0)):.2f}" if used_data.get("avg_price") else "N/A",
                 "Qty (Used)": used_data.get("total_quantity", "N/A"),
                 "Lots (Used)": used_data.get("unit_quantity", "N/A"),
+                "BrickLink Page": f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
             }
     except Exception:
         return {
@@ -73,10 +74,12 @@ def fetch_set_data(set_number, auth):
             "Lots (New)": "Error",
             "Avg Price (Used)": "Error",
             "Qty (Used)": "Error",
-            "Lots (Used)": "Error"
+            "Lots (Used)": "Error",
+            "BrickLink Page": "Error"
         }
 
     return None
+
 
 # -----------------------------
 # 🚀 Fetch and Display
