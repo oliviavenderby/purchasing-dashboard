@@ -6,16 +6,16 @@ import pandas as pd
 # -----------------------------
 # 🔐 Sidebar: API Credentials
 # -----------------------------
-st.sidebar.header("🔑 BrickLink API Credentials")
+st.sidebar.header("BrickLink API Credentials")
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
-# 🧱 Main App Interface
+# Main App Interface
 # -----------------------------
-st.title("🧱 LEGO Set Price Summary (BrickLink API)")
+st.title("LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
@@ -125,8 +125,8 @@ if st.button("Fetch Data for Sets"):
 
         if results:
             df = pd.DataFrame(results)
-            st.success("✅ Data loaded successfully")
-            st.markdown("📎 Click a set name to view on BrickLink:")
+            st.success("Data loaded successfully")
+            st.markdown("Click a set name to view on BrickLink:")
             st.markdown("""
             <div style="text-align: left">
             """, unsafe_allow_html=True)
@@ -141,7 +141,7 @@ if st.button("Fetch Data for Sets"):
         st.warning("Please enter your BrickLink credentials and at least one set number.")
 
 # -----------------------------
-# 🧾 Footer
+# Footer
 # -----------------------------
 st.markdown("---")
 st.caption("Powered by BrickLink API • Created by ReUseBricks")
