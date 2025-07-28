@@ -131,7 +131,7 @@ if st.button("Fetch Data for Sets"):
             <div style="text-align: left">
             """, unsafe_allow_html=True)
 
-            st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
+            st.write(df.to_html(escape=False, index=False, border=0, justify='left'), unsafe_allow_html=True)
 
             st.markdown("</div>", unsafe_allow_html=True)
 
