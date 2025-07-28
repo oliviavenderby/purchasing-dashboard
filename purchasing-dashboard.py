@@ -127,7 +127,14 @@ if st.button("Fetch Data for Sets"):
             df = pd.DataFrame(results)
             st.success("✅ Data loaded successfully")
             st.markdown("📎 Click a set name to view on BrickLink:")
+            st.markdown("""
+            <div style="text-align: left">
+            """, unsafe_allow_html=True)
+
             st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
         else:
             st.warning("No valid results found.")
     else:
