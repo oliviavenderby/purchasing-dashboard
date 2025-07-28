@@ -143,7 +143,21 @@ if st.button("Fetch Data for Sets"):
                 <div style="text-align: left">
             """, unsafe_allow_html=True)
             st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+            # Prepare DataFrame for CSV export (exclude HTML tags)
+            df_csv = df.copy()
+            df_csv["Set Name"] = df_csv["Set Name"].str.extract(r'">(.*?)</a>')  # Remove anchor tag
+            df_csv["Set Image"] = df_csv["Set Image"].str.extract(r'src="(.*?)"')  # Extract image URL
+            
+            csv = df_csv.to_csv(index=False).encode("utf-8")
+            
+            st.download_button(
+                label="📥 Download as CSV",
+                data=csv,
+                file_name="bricklink_set_prices.csv",
+                mime="text/csv"
+            )
+            
+                        st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.warning("No valid results found.")
     else:
