@@ -37,7 +37,11 @@ if fetch_clicked:
 
             with col1:
                 st.markdown("**🟢 New Condition**")
-                st.metric("Avg Price (New)", f"${new_data['avg_price']:.2f}")
+                avg_price_new = new_data.get("avg_price")
+                if avg_price_new is not None:
+                    st.metric("Avg Price (New)", f"${float(avg_price_new):.2f}")
+                else:
+                    st.warning("No average price (new) available.")          
                 st.metric("Total Qty Sold (New)", new_data['total_quantity'])
                 st.metric("Total Sales (New)", new_data['unit_quantity'])
 
