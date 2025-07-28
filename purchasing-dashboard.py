@@ -157,7 +157,7 @@ if st.button("Fetch Data for Sets"):
                 mime="text/csv"
             )
             
-                        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.warning("No valid results found.")
     else:
