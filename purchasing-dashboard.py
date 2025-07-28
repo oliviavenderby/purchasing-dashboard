@@ -46,48 +46,65 @@ def fetch_set_metadata(set_number, auth):
     return None
 
 # -----------------------------
-# 📦 Fetch Price Guide Data
+# 📦 Fetch Price Data (Current and Sold)
+# -----------------------------
+def fetch_price_data(set_number, auth, guide_type, new_or_used):
+    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
+    params = {
+        "guide_type": guide_type,
+        "new_or_used": new_or_used
+    }
+    try:
+        resp = requests.get(url, params=params, auth=auth)
+        if resp.status_code == 200:
+            return resp.json().get("data", {})
+    except Exception:
+        pass
+    return {}
+
+# -----------------------------
+# 📊 Fetch All Set Data
 # -----------------------------
 def fetch_set_data(set_number, auth):
     set_number = normalize_set_number(set_number)
-    base_url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
-    try:
-        new_resp = requests.get(base_url + "?new_or_used=N", auth=auth)
-        used_resp = requests.get(base_url + "?new_or_used=U", auth=auth)
-        metadata = fetch_set_metadata(set_number, auth)
+    metadata = fetch_set_metadata(set_number, auth)
 
-        if new_resp.status_code == 200 and used_resp.status_code == 200:
-            new_data = new_resp.json().get("data", {})
-            used_data = used_resp.json().get("data", {})
+    # Current for sale
+    current_new = fetch_price_data(set_number, auth, "stock", "N")
+    current_used = fetch_price_data(set_number, auth, "stock", "U")
 
-            set_name = metadata.get("Set Name", "N/A")
-            link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
+    # Last 6 months sold
+    sold_new = fetch_price_data(set_number, auth, "sold", "N")
+    sold_used = fetch_price_data(set_number, auth, "sold", "U")
 
-            return {
-                "Set Number": set_number,
-                "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
-                "Category ID": metadata.get("Category ID", "N/A"),
-                "Avg Price (New)": f"${float(new_data.get('avg_price', 0)):.2f}" if new_data.get("avg_price") else "N/A",
-                "Qty (New)": new_data.get("total_quantity", "N/A"),
-                "Lots (New)": new_data.get("unit_quantity", "N/A"),
-                "Avg Price (Used)": f"${float(used_data.get('avg_price', 0)):.2f}" if used_data.get("avg_price") else "N/A",
-                "Qty (Used)": used_data.get("total_quantity", "N/A"),
-                "Lots (Used)": used_data.get("unit_quantity", "N/A"),
-            }
-    except Exception:
-        return {
-            "Set Number": set_number,
-            "Set Name": "Error",
-            "Category ID": "Error",
-            "Avg Price (New)": "Error",
-            "Qty (New)": "Error",
-            "Lots (New)": "Error",
-            "Avg Price (Used)": "Error",
-            "Qty (Used)": "Error",
-            "Lots (Used)": "Error"
-        }
+    set_name = metadata.get("Set Name", "N/A")
+    link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
 
-    return None
+    return {
+        "Set Number": set_number,
+        "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
+        "Category ID": metadata.get("Category ID", "N/A"),
+
+        # Current New
+        "Current Avg (New)": f"${float(current_new.get('avg_price', 0)):.2f}" if current_new.get("avg_price") else "N/A",
+        "Qty (New)": current_new.get("total_quantity", "N/A"),
+        "Lots (New)": current_new.get("unit_quantity", "N/A"),
+
+        # Current Used
+        "Current Avg (Used)": f"${float(current_used.get('avg_price', 0)):.2f}" if current_used.get("avg_price") else "N/A",
+        "Qty (Used)": current_used.get("total_quantity", "N/A"),
+        "Lots (Used)": current_used.get("unit_quantity", "N/A"),
+
+        # Sold New
+        "Sold Avg (New)": f"${float(sold_new.get('avg_price', 0)):.2f}" if sold_new.get("avg_price") else "N/A",
+        "Sold Qty (New)": sold_new.get("total_quantity", "N/A"),
+        "Times Sold (New)": sold_new.get("unit_quantity", "N/A"),
+
+        # Sold Used
+        "Sold Avg (Used)": f"${float(sold_used.get('avg_price', 0)):.2f}" if sold_used.get("avg_price") else "N/A",
+        "Sold Qty (Used)": sold_used.get("total_quantity", "N/A"),
+        "Times Sold (Used)": sold_used.get("unit_quantity", "N/A"),
+    }
 
 # -----------------------------
 # 🚀 Fetch and Display
@@ -121,4 +138,5 @@ if st.button("Fetch Data for Sets"):
 # -----------------------------
 st.markdown("---")
 st.caption("Powered by BrickLink API • Created by ReUseBricks")
+
 
