@@ -28,18 +28,27 @@ if st.button("Fetch Price Data") and all([consumer_key, consumer_secret, token, 
 
         st.subheader(f"💸 Price Guide for Set {set_number}")
         col1, col2 = st.columns(2)
+        
+        if "new" in data:
+            with col1:
+                st.markdown("**🟢 New Condition**")
+                st.metric("Avg Price (New)", f"${data['new']['avg_price']:.2f}")
+                st.metric("Total Qty Sold (New)", data['new']['total_quantity'])
+                st.metric("Total Sales (New)", data['new']['unit_quantity'])
+        else:
+            with col1:
+                st.warning("No new condition data available.")
+        
+        if "used" in data:
+            with col2:
+                st.markdown("**🟠 Used Condition**")
+                st.metric("Avg Price (Used)", f"${data['used']['avg_price']:.2f}")
+                st.metric("Total Qty Sold (Used)", data['used']['total_quantity'])
+                st.metric("Total Sales (Used)", data['used']['unit_quantity'])
+        else:
+            with col2:
+                st.warning("No used condition data available.")
 
-        with col1:
-            st.markdown("**🟢 New Condition**")
-            st.metric("Avg Price (New)", f"${data['new']['avg_price']:.2f}")
-            st.metric("Total Qty Sold (New)", data['new']['total_quantity'])
-            st.metric("Total Sales (New)", data['new']['unit_quantity'])
-
-        with col2:
-            st.markdown("**🟠 Used Condition**")
-            st.metric("Avg Price (Used)", f"${data['used']['avg_price']:.2f}")
-            st.metric("Total Qty Sold (Used)", data['used']['total_quantity'])
-            st.metric("Total Sales (Used)", data['used']['unit_quantity'])
 
     else:
         st.error(f"Failed to fetch data (status code: {response.status_code})")
