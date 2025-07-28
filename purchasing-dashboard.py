@@ -19,40 +19,39 @@ fetch_clicked = st.button("Fetch Price Data")
 if fetch_clicked:
     if all([consumer_key, consumer_secret, token, token_secret, set_number]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
-        url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
 
-        with st.spinner("Fetching data from BrickLink..."):
-            response = requests.get(url, auth=auth)
+        # Make two calls: one for NEW, one for USED
+        url_base = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
 
-        if response.status_code == 200:
-            data = response.json()["data"]
+        with st.spinner("Fetching NEW price data..."):
+            response_new = requests.get(url_base + "?new_or_used=N", auth=auth)
+        with st.spinner("Fetching USED price data..."):
+            response_used = requests.get(url_base + "?new_or_used=U", auth=auth)
+
+        if response_new.status_code == 200 and response_used.status_code == 200:
+            new_data = response_new.json()["data"]
+            used_data = response_used.json()["data"]
 
             st.subheader(f"💸 Price Guide for Set {set_number}")
             col1, col2 = st.columns(2)
-            
-            if "new" in data:
-                with col1:
-                    st.markdown("**🟢 New Condition**")
-                    st.metric("Avg Price (New)", f"${data['new']['avg_price']:.2f}")
-                    st.metric("Total Qty Sold (New)", data['new']['total_quantity'])
-                    st.metric("Total Sales (New)", data['new']['unit_quantity'])
-            else:
-                with col1:
-                    st.warning("No new condition data available.")
-            
-            if "used" in data:
-                with col2:
-                    st.markdown("**🟠 Used Condition**")
-                    st.metric("Avg Price (Used)", f"${data['used']['avg_price']:.2f}")
-                    st.metric("Total Qty Sold (Used)", data['used']['total_quantity'])
-                    st.metric("Total Sales (Used)", data['used']['unit_quantity'])
-            else:
-                with col2:
-                    st.warning("No used condition data available.")
+
+            with col1:
+                st.markdown("**🟢 New Condition**")
+                st.metric("Avg Price (New)", f"${new_data['avg_price']:.2f}")
+                st.metric("Total Qty Sold (New)", new_data['total_quantity'])
+                st.metric("Total Sales (New)", new_data['unit_quantity'])
+
+            with col2:
+                st.markdown("**🟠 Used Condition**")
+                st.metric("Avg Price (Used)", f"${used_data['avg_price']:.2f}")
+                st.metric("Total Qty Sold (Used)", used_data['total_quantity'])
+                st.metric("Total Sales (Used)", used_data['unit_quantity'])
+
         else:
-            st.error(f"Failed to fetch data (status code: {response.status_code})")
+            st.error("Failed to fetch data from BrickLink API.")
     else:
         st.warning("Please fill in all API credentials and a set number.")
+
 
 with st.expander("🔍 API Debug Info"):
     st.write("Status code:", response.status_code)
