@@ -47,6 +47,7 @@ if fetch_clicked:
 
             with col2:
                 st.markdown("**🟠 Used Condition**")
+                avg_price_used = used_data.get("avg_price")
                 if avg_price_used is not None:
                     st.metric("Avg Price (Used)", f"${float['avg_price_used']:.2f}")
                 else:
