@@ -6,16 +6,16 @@ import pandas as pd
 # -----------------------------
 # 🔐 Sidebar: API Credentials
 # -----------------------------
-st.sidebar.header("BrickLink API Credentials")
+st.sidebar.header("🔑 BrickLink API Credentials")
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
-# Main App Interface
+# 🧱 Main App Interface
 # -----------------------------
-st.title("LEGO Set Price Summary (BrickLink API)")
+st.title("🧱 LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
 # -----------------------------
@@ -39,11 +39,24 @@ def fetch_set_metadata(set_number, auth):
                 "Category ID": data.get("category_id", "N/A")
             }
     except Exception:
-        return {
-            "Set Name": "Error",
-            "Category ID": "Error"
-        }
-    return None
+        pass
+    return {
+        "Set Name": "Error",
+        "Category ID": "Error"
+    }
+
+# -----------------------------
+# 🖼️ Fetch Image URL
+# -----------------------------
+def fetch_image_url(set_number, auth):
+    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/images/0"
+    try:
+        resp = requests.get(url, auth=auth)
+        if resp.status_code == 200:
+            return resp.json().get("data", {}).get("thumbnail_url", "")
+    except:
+        pass
+    return ""
 
 # -----------------------------
 # 📦 Fetch Price Data (Current and Sold)
@@ -68,12 +81,10 @@ def fetch_price_data(set_number, auth, guide_type, new_or_used):
 def fetch_set_data(set_number, auth):
     set_number = normalize_set_number(set_number)
     metadata = fetch_set_metadata(set_number, auth)
+    image_url = fetch_image_url(set_number, auth)
 
-    # Current for sale
     current_new = fetch_price_data(set_number, auth, "stock", "N")
     current_used = fetch_price_data(set_number, auth, "stock", "U")
-
-    # Last 6 months sold
     sold_new = fetch_price_data(set_number, auth, "sold", "N")
     sold_used = fetch_price_data(set_number, auth, "sold", "U")
 
@@ -81,6 +92,7 @@ def fetch_set_data(set_number, auth):
     link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
 
     return {
+        "Set Image": f'<img src="{image_url}" width="100"/>',
         "Set Number": set_number,
         "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
         "Category ID": metadata.get("Category ID", "N/A"),
@@ -125,25 +137,20 @@ if st.button("Fetch Data for Sets"):
 
         if results:
             df = pd.DataFrame(results)
-            st.success("Data loaded successfully")
-            st.markdown("Click a set name to view on BrickLink:")
+            st.success("✅ Data loaded successfully")
+            st.markdown("📎 Click a set name to view on BrickLink:")
             st.markdown("""
-            <div style="text-align: left">
+                <div style="text-align: left">
             """, unsafe_allow_html=True)
-
-            st.write(df.to_html(escape=False, index=False, border=0, justify='left'), unsafe_allow_html=True)
-
+            st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-
         else:
             st.warning("No valid results found.")
     else:
         st.warning("Please enter your BrickLink credentials and at least one set number.")
 
 # -----------------------------
-# Footer
+# 🧾 Footer
 # -----------------------------
 st.markdown("---")
 st.caption("Powered by BrickLink API • Created by ReUseBricks")
-
-
