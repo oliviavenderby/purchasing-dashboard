@@ -3,9 +3,8 @@ import requests
 from requests_oauthlib import OAuth1
 import pandas as pd
 
-# -----------------------------
 # Sidebar: API Credentials
-# -----------------------------
+
 st.sidebar.header("BrickLink API Credentials")
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
@@ -20,8 +19,7 @@ with st.sidebar.expander("Show Current IP Address"):
     except:
         st.error("Unable to fetch IP address.")
 
-# -----------------------------
-# CSS: Align content to left
+# Align content left
 
 st.markdown("""
     <style>
@@ -35,22 +33,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# -----------------------------
 # Main App Interface
-# -----------------------------
+
 st.title("LEGO Set Price Summary (BrickLink API)")
 set_input = st.text_input("Enter LEGO Set Numbers (comma-separated):", placeholder="e.g., 10276, 75192, 21309")
 
-# -----------------------------
-# 🔧 Normalize Set Number
-# -----------------------------
+# Normalize Set Number
+
 def normalize_set_number(s):
     s = s.strip()
     return s if "-" in s else f"{s}-1"
 
-# -----------------------------
-# 🧩 Fetch Set Metadata
-# -----------------------------
+# Fetch Set Metadata
+
 def fetch_set_metadata(set_number, auth):
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
     try:
