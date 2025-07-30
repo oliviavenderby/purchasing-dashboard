@@ -2,18 +2,7 @@ import streamlit as st
 import requests
 from requests_oauthlib import OAuth1
 import pandas as pd
-
-
-# Sidebar: Show Current IP Address
-# -----------------------------
-with st.sidebar.expander("Show Current IP Address"):
-    try:
-        ip = requests.get("https://api.ipify.org").text
-        st.code(ip, language="text")
-        st.caption("Use this IP address to register your BrickLink API access.")
-    except:
-        st.error("Unable to fetch IP address. Check your internet connection.")
-
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 # -----------------------------
 # Sidebar: API Credentials
@@ -23,6 +12,15 @@ consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
+
+# IP Address Display (Optional)
+with st.sidebar.expander("🔍 Show Current IP Address"):
+    try:
+        ip = requests.get("https://api.ipify.org").text
+        st.code(ip, language="text")
+        st.caption("Use this IP address to register your BrickLink API access.")
+    except:
+        st.error("Unable to fetch IP address. Check your internet connection.")
 
 # -----------------------------
 # Main App Interface
@@ -104,9 +102,10 @@ def fetch_set_data(set_number, auth):
     link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
 
     return {
-        "Set Image": f'<img src="{image_url}" width="300"/>',
+        "Set Image URL": image_url,
         "Set Number": set_number,
-        "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
+        "Set Name": set_name,
+        "BrickLink URL": link,
         "Category ID": metadata.get("Category ID", "N/A"),
 
         # Current New
@@ -119,7 +118,7 @@ def fetch_set_data(set_number, auth):
         "Qty (Used)": current_used.get("total_quantity", "N/A"),
         "Lots (Used)": current_used.get("unit_quantity", "N/A"),
 
-        # Last 6 months Sales New
+        # Sold New
         "Last 6 Months Sales - Avg Price (New)": f"${float(sold_new.get('avg_price', 0)):.2f}" if sold_new.get("avg_price") else "N/A",
         "Sold Qty (New)": sold_new.get("total_quantity", "N/A"),
         "Times Sold (New)": sold_new.get("unit_quantity", "N/A"),
@@ -149,27 +148,42 @@ if st.button("Fetch Data for Sets"):
 
         if results:
             df = pd.DataFrame(results)
+
+            # Create a column with markdown for link display (AgGrid doesn't support HTML natively)
+            df["BrickLink Link"] = df.apply(
+                lambda row: f"[{row['Set Name']}]({row['BrickLink URL']})", axis=1
+            )
+            df["Thumbnail"] = df["Set Image URL"].apply(lambda url: f"![img]({url})" if url else "")
+
+            # Select columns to display
+            display_df = df[[
+                "Thumbnail", "Set Number", "BrickLink Link", "Category ID",
+                "Current Avg Price (New)", "Qty (New)", "Lots (New)",
+                "Current Avg Price (Used)", "Qty (Used)", "Lots (Used)",
+                "Last 6 Months Sales - Avg Price (New)", "Sold Qty (New)", "Times Sold (New)",
+                "Last 6 Months Sales - Avg Price (Used)", "Sold Qty (Used)", "Times Sold (Used)"
+            ]]
+
+            # Configure AgGrid
+            gb = GridOptionsBuilder.from_dataframe(display_df)
+            gb.configure_pagination()
+            gb.configure_default_column(wrapText=True, autoHeight=True)
+            gridOptions = gb.build()
+
             st.success("✅ Data loaded successfully")
-            st.markdown("📎 Click a set name to view on BrickLink:")
-            st.markdown("""
-                <div style="text-align: left">
-            """, unsafe_allow_html=True)
-            st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            # Prepare DataFrame for CSV export (exclude HTML tags)
-            df_csv = df.copy()
-            df_csv["Set Name"] = df_csv["Set Name"].str.extract(r'">(.*?)</a>')  # Remove anchor tag
-            df_csv["Set Image"] = df_csv["Set Image"].str.extract(r'src="(.*?)"')  # Extract image URL
-            
-            csv = df_csv.to_csv(index=False).encode("utf-8")
-            
+            st.markdown("📎 Click set names to view them on BrickLink:")
+
+            AgGrid(display_df, gridOptions=gridOptions, allow_unsafe_jscode=True, height=500)
+
+            # Downloadable CSV (clean version)
+            download_df = df.drop(columns=["Thumbnail", "BrickLink Link"])
+            csv = download_df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Download as CSV",
+                label="📥 Download CSV",
                 data=csv,
                 file_name="bricklink_set_prices.csv",
                 mime="text/csv"
             )
-            
-            st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.warning("No valid results found.")
     else:
