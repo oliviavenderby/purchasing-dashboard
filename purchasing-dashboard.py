@@ -3,16 +3,7 @@ import requests
 from requests_oauthlib import OAuth1
 import pandas as pd
 
-# -----------------------------
-# Sidebar: API Credentials
-# -----------------------------
-st.sidebar.header("BrickLink API Credentials")
-consumer_key = st.sidebar.text_input("Consumer Key", type="password")
-consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
-token = st.sidebar.text_input("Token", type="password")
-token_secret = st.sidebar.text_input("Token Secret", type="password")
 
-# -----------------------------
 # Sidebar: Show Current IP Address
 # -----------------------------
 with st.sidebar.expander("🔍 Show Current IP Address"):
@@ -22,6 +13,16 @@ with st.sidebar.expander("🔍 Show Current IP Address"):
         st.caption("Use this IP address to register your BrickLink API access.")
     except:
         st.error("Unable to fetch IP address. Check your internet connection.")
+
+
+# -----------------------------
+# Sidebar: API Credentials
+# -----------------------------
+st.sidebar.header("BrickLink API Credentials")
+consumer_key = st.sidebar.text_input("Consumer Key", type="password")
+consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
+token = st.sidebar.text_input("Token", type="password")
+token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
 # Main App Interface
