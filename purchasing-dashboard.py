@@ -7,20 +7,22 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 # -----------------------------
 # Sidebar: API Credentials
 # -----------------------------
-st.sidebar.header("BrickLink API Credentials")
-consumer_key = st.sidebar.text_input("Consumer Key", type="password")
-consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
-token = st.sidebar.text_input("Token", type="password")
-token_secret = st.sidebar.text_input("Token Secret", type="password")
+
 
 # IP Address Display (Optional)
-with st.sidebar.expander("🔍 Show Current IP Address"):
+with st.sidebar.expander("Show Current IP Address"):
     try:
         ip = requests.get("https://api.ipify.org").text
         st.code(ip, language="text")
         st.caption("Use this IP address to register your BrickLink API access.")
     except:
         st.error("Unable to fetch IP address. Check your internet connection.")
+
+st.sidebar.header("BrickLink API Credentials")
+consumer_key = st.sidebar.text_input("Consumer Key", type="password")
+consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
+token = st.sidebar.text_input("Token", type="password")
+token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
 # Main App Interface
