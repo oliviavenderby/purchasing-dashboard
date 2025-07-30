@@ -12,7 +12,7 @@ consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
-with st.sidebar.expander("🔍 Show Current IP Address"):
+with st.sidebar.expander("Show Current IP Address"):
     try:
         ip = requests.get("https://api.ipify.org").text
         st.code(ip, language="text")
@@ -145,6 +145,8 @@ def fetch_set_data(set_number, auth):
 # 🚀 Fetch and Display
 # -----------------------------
 if st.button("Fetch Data for Sets"):
+    st.info("Please note, data excludes incomplete sets.")
+    
     if all([consumer_key, consumer_secret, token, token_secret, set_input]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
 
@@ -160,8 +162,7 @@ if st.button("Fetch Data for Sets"):
 
         if results:
             df = pd.DataFrame(results)
-            st.success("✅ Data loaded successfully")
-            st.markdown("📎 Click a set name to view on BrickLink:")
+            st.success("Data loaded successfully")
             st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
             # Prepare CSV
@@ -171,7 +172,7 @@ if st.button("Fetch Data for Sets"):
             csv = df_csv.to_csv(index=False).encode("utf-8")
 
             st.download_button(
-                label="📥 Download as CSV",
+                label="Download as CSV",
                 data=csv,
                 file_name="bricklink_set_prices.csv",
                 mime="text/csv"
@@ -182,7 +183,7 @@ if st.button("Fetch Data for Sets"):
         st.warning("Please enter your BrickLink credentials and at least one set number.")
 
 # -----------------------------
-# 🧾 Footer
+# Footer
 # -----------------------------
 st.markdown("---")
-st.caption("Powered by BrickLink API • Created by ReUseBricks")
+st.caption("Powered by BrickLink API, Brickset API, and BrickEconomy API • Created by ReUseBricks")
