@@ -22,16 +22,18 @@ with st.sidebar.expander("🔍 Show Current IP Address"):
 
 # -----------------------------
 # CSS: Align content to left
-# -----------------------------
+
 st.markdown("""
     <style>
-    .main > div {
-        max-width: 95%;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
+        .block-container {
+            padding-top: 2rem;
+            padding-left: 2rem;
+            padding-right: 2rem;
+            max-width: 100%;
+        }
     </style>
 """, unsafe_allow_html=True)
+
 
 # -----------------------------
 # Main App Interface
