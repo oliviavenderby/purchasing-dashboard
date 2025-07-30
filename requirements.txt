@@ -2,4 +2,3 @@ streamlit
 requests
 requests_oauthlib
 pandas
-streamlit-aggrid
