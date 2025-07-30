@@ -6,7 +6,7 @@ import pandas as pd
 
 # Sidebar: Show Current IP Address
 # -----------------------------
-with st.sidebar.expander("🔍 Show Current IP Address"):
+with st.sidebar.expander("Show Current IP Address"):
     try:
         ip = requests.get("https://api.ipify.org").text
         st.code(ip, language="text")
