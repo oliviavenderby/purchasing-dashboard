@@ -145,7 +145,7 @@ def fetch_set_data(set_number, auth):
 # 🚀 Fetch and Display
 # -----------------------------
 if st.button("Fetch Data for Sets"):
-    st.info("Please note, data excludes incomplete sets.")
+    st.markdown("*Please note, data excludes incomplete sets.*")
     
     if all([consumer_key, consumer_secret, token, token_secret, set_input]):
         auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
