@@ -13,6 +13,17 @@ token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 # -----------------------------
+# Sidebar: Show Current IP Address
+# -----------------------------
+with st.sidebar.expander("🔍 Show Current IP Address"):
+    try:
+        ip = requests.get("https://api.ipify.org").text
+        st.code(ip, language="text")
+        st.caption("Use this IP address to register your BrickLink API access.")
+    except:
+        st.error("Unable to fetch IP address. Check your internet connection.")
+
+# -----------------------------
 # Main App Interface
 # -----------------------------
 st.title("LEGO Set Price Summary (BrickLink API)")
