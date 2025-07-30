@@ -6,11 +6,48 @@ import pandas as pd
 # -----------------------------
 # Sidebar: API Credentials
 # -----------------------------
-st.sidebar.header("BrickLink API Credentials")
-consumer_key = st.sidebar.text_input("Consumer Key", type="password")
-consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
-token = st.sidebar.text_input("Token", type="password")
-token_secret = st.sidebar.text_input("Token Secret", type="password")
+# --- Sidebar: User Inputs ---
+with st.sidebar:
+    try:
+        image = Image.open("reuse_logo.png")
+        st.image(image, use_container_width=True)
+    except FileNotFoundError:
+        st.warning("Logo not found. Add 'reuse_logo.png' to display branding.")
+
+    ip = requests.get("https://api.ipify.org").text
+
+    st.markdown(
+        '<a href="https://www.bricklink.com/v2/api/register_consumer.page" target="_blank" style="text-decoration:none; color:black;"><b>Click here to create Access Token</b></a>',
+        unsafe_allow_html=True
+    )
+    st.text_input(" ", value=ip, disabled=True, label_visibility="collapsed")
+
+    consumer_key = st.text_input("Consumer Key")
+    consumer_secret = st.text_input("Consumer Secret", type="password")
+    token = st.text_input("Token")
+    token_secret = st.text_input("Token Secret", type="password")
+
+# --- Validate credentials ---
+def is_ready():
+    return all([consumer_key, consumer_secret, token, token_secret])
+
+# --- Function to call BrickLink API ---
+def call_api(endpoint, params=None):
+    auth = OAuth1(
+        consumer_key,
+        consumer_secret,
+        token,
+        token_secret,
+        signature_method='HMAC-SHA1',
+        signature_type='auth_header'
+    )
+    url = f"https://api.bricklink.com/api/store/v1/{endpoint}"
+    response = requests.get(url, auth=auth, params=params)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Error {response.status_code}: {response.json().get('meta', {}).get('description', '')}")
+        return None
 
 # -----------------------------
 # Main App Interface
