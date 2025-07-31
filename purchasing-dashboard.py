@@ -322,37 +322,21 @@ st.set_page_config(page_title="LEGO Set Dashboard", layout="wide")
 
 # Sidebar credentials
 st.sidebar.header("API Credentials")
+
 st.sidebar.subheader("BrickLink API")
-
-# Read the BrickLink consumer key and consumer secret from Streamlit secrets.
-# These should be defined in `.streamlit/secrets.toml` under the [bricklink] section:
-# consumer_key = "..."
-# consumer_secret = "..."
-bricklink_secrets = st.secrets.get("bricklink", {})
-consumer_key = bricklink_secrets.get("consumer_key", "")
-consumer_secret = bricklink_secrets.get("consumer_secret", "")
-
-# The user must still enter the short-lived token and token secret at runtime.
+# For security, all BrickLink credentials are entered manually in the sidebar.
+consumer_key = st.sidebar.text_input("Consumer Key", type="password")
+consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 st.sidebar.subheader("BrickSet API")
-
-# Read the BrickSet API key from secrets. It should be defined in
-# `.streamlit/secrets.toml` under [brickset] as api_key = "..."
-brickset_secrets = st.secrets.get("brickset", {})
-brickset_key = brickset_secrets.get("api_key", "")
-
-# If the key is not found, display a warning so the user knows to add it.
-if not brickset_key:
-    st.sidebar.warning(
-        "BrickSet API key not found in secrets. Please add it to your secrets file."
-    )
+# BrickSet API key is also entered manually. This app does not persist the key.
+brickset_key = st.sidebar.text_input("BrickSet API Key", type="password")
 
 st.sidebar.subheader("BrickEconomy API")
-# BrickEconomy API key is provided manually for security.  Users should
-# paste their BrickEconomy key here.  The app does not persist this
-# value anywhere.
+# BrickEconomy API key is provided manually for security. Users should
+# paste their BrickEconomy key here. The app does not persist this value.
 brickeconomy_key = st.sidebar.text_input(
     "BrickEconomy API Key", type="password"
 )
@@ -448,7 +432,7 @@ with tab_brickset:
     st.caption(
         "Enter your BrickSet API key in the sidebar. Provide one or more set "
         "numbers to retrieve official metadata such as piece counts, minifig counts, "
-        "themes, years, and ratings. You can cache your key in ``secrets.toml``."
+        "themes, years, ratings, and ownership statistics. The API key is not stored."
     )
     bs_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
@@ -494,7 +478,7 @@ with tab_brickeconomy:
     st.caption(
         "Enter LEGO set numbers and your BrickEconomy API key in the sidebar to "
         "retrieve pricing and valuation metrics. Optionally choose a currency; "
-        "USD is the default."
+        "USD is the default. The API key is not stored."
     )
 
     # Input for set numbers
