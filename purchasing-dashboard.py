@@ -465,11 +465,6 @@ with tab_brickset:
 # -----------------------------------------------------------------------------
 with tab_brickeconomy:
     st.header("BrickEconomy Data")
-    st.caption(
-        "Enter LEGO set numbers and your BrickEconomy API key in the sidebar to "
-        "retrieve pricing and valuation metrics. Optionally choose a currency; "
-        "USD is the default."
-    )
 
     # Input for set numbers
     be_set_input = st.text_input(
