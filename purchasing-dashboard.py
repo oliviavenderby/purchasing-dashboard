@@ -214,11 +214,11 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
             # Extract nested collection ownership counts
             collections = set_info.get("collections", {}) or {}
             return {
-                "Set Name (BrickSet)": set_info.get("name", "N/A"),
+                "Set Name": set_info.get("name", "N/A"),
                 "Pieces": set_info.get("pieces", "N/A"),
                 "Minifigs": set_info.get("minifigs", "N/A"),
-                "BrickSet Theme": set_info.get("theme", "N/A"),
-                "BrickSet Year": set_info.get("year", "N/A"),
+                "Theme": set_info.get("theme", "N/A"),
+                "Release Year": set_info.get("year", "N/A"),
                 "BrickSet Rating": set_info.get("rating", "N/A"),
                 "Users Owned": collections.get("ownedBy", "N/A"),
                 "Users Wanted": collections.get("wantedBy", "N/A"),
@@ -227,11 +227,11 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
         # Swallow errors and return N/A values if any exception occurs
         pass
     return {
-        "Set Name (BrickSet)": "N/A",
+        "Set Name": "N/A",
         "Pieces": "N/A",
         "Minifigs": "N/A",
-        "BrickSet Theme": "N/A",
-        "BrickSet Year": "N/A",
+        "Theme": "N/A",
+        "Release Year": "N/A",
         "BrickSet Rating": "N/A",
         "Users Owned": "N/A",
         "Users Wanted": "N/A",
