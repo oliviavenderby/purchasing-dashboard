@@ -1,4 +1,3 @@
-
 import json
 import pandas as pd
 import requests
@@ -181,10 +180,12 @@ def fetch_set_data(set_number: str, auth: OAuth1) -> dict:
 def fetch_brickset_details(set_number: str, api_key: str) -> dict:
     """Fetch official metadata for a set from the BrickSet API.
 
-    BrickSet's `getSets` endpoint requires the API key and a JSON-encoded
-    parameter string. We request extended data (rating, notes, etc.) so
-    additional fields can be displayed if desired.  See the BrickSet
-    documentation for parameter options【203633109552688†L501-L535】.
+    This function sends a POST request to the BrickSet `getSets` endpoint with
+    three parameters: ``apiKey``, ``userHash``, and a JSON-encoded ``params``
+    string. Even when not retrieving owned or wanted sets, the API requires
+    a ``userHash`` parameter to be present, so an empty string is provided.
+    The request asks for ``extendedData`` to include additional fields such
+    as ratings, tags and descriptions.
 
     Args:
         set_number: Normalized set number (e.g. "75192-1").
@@ -195,13 +196,18 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
         error.
     """
     url = "https://brickset.com/api/v3.asmx/getSets"
+    # Request extended data for a richer response
     params = {"setNumber": set_number, "extendedData": 1}
-    payload = {
+    # According to the API documentation, userHash is mandatory even if not used
+    form_data = {
         "apiKey": api_key,
+        "userHash": "",  # empty user hash since we're not logged in
         "params": json.dumps(params),
     }
     try:
-        resp = requests.get(url, params=payload, timeout=20)
+        # Use POST instead of GET to avoid URL length issues and satisfy API requirements
+        resp = requests.post(url, data=form_data, timeout=20)
+        # The response should be JSON; if it's XML, .json() will raise
         data = resp.json()
         if data.get("status") == "success" and data.get("matches", 0) > 0:
             set_info = data["sets"][0]
@@ -213,6 +219,7 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
                 "BrickSet Rating": set_info.get("rating", "N/A"),
             }
     except Exception:
+        # Swallow errors and return N/A values if any exception occurs
         pass
     return {
         "Pieces": "N/A",
