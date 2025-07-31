@@ -282,7 +282,7 @@ def fetch_brickeconomy_details(
         if data:
             return {
                 "Set Name": data.get("name", "N/A"),
-                "Theme)": data.get("theme", "N/A"),
+                "Theme": data.get("theme", "N/A"),
                 "Subtheme": data.get("subtheme", "N/A"),
                 "Year": data.get("year", "N/A"),
                 "Pieces": data.get("pieces_count", "N/A"),
@@ -332,14 +332,12 @@ token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 st.sidebar.subheader("BrickSet API")
 # BrickSet API key is also entered manually. This app does not persist the key.
-brickset_key = st.sidebar.text_input("BrickSet API Key", type="password")
+brickset_key = st.sidebar.text_input(type="password")
 
 st.sidebar.subheader("BrickEconomy API")
 # BrickEconomy API key is provided manually for security. Users should
 # paste their BrickEconomy key here. The app does not persist this value.
-brickeconomy_key = st.sidebar.text_input(
-    "BrickEconomy API Key", type="password"
-)
+brickeconomy_key = st.sidebar.text_input(type="password")
 
 with st.sidebar.expander("Show Current IP Address"):
     try:
@@ -375,9 +373,11 @@ tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet"
 # -----------------------------------------------------------------------------
 with tab_bricklink:
     st.header("BrickLink Data")
+
     set_input = st.text_input(
-        "Enter LEGO Set Numbers (comma-separated):",
+        "Enter LEGO Set Numbers (comma-separated) for BrickLink:",
         placeholder="e.g., 10276, 75192, 21309",
+        key="bricklink_set_input",
     )
     # Button to trigger BrickLink data fetch
     if st.button("Fetch BrickLink Data"):
@@ -425,8 +425,9 @@ with tab_brickset:
     st.header("BrickSet Data")
     
     bs_set_input = st.text_input(
-        "Enter LEGO Set Numbers (comma-separated)",
+        "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
         placeholder="e.g., 10276, 75192, 21309",
+        key="brickset_set_input",
     )
     # Button to trigger BrickSet data fetch
     if st.button("Fetch BrickSet Data"):
@@ -468,8 +469,9 @@ with tab_brickeconomy:
     
     # Input for set numbers
     be_set_input = st.text_input(
-        "Enter LEGO Set Numbers (comma-separated)",
+        "Enter LEGO Set Numbers (comma-separated) for BrickEconomy:",
         placeholder="e.g., 10276, 75192, 21309",
+        key="brickeconomy_set_input",
     )
     # Allow user to select currency; default to USD
     currency = st.selectbox(
