@@ -211,22 +211,30 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
         data = resp.json()
         if data.get("status") == "success" and data.get("matches", 0) > 0:
             set_info = data["sets"][0]
+            # Extract nested collection ownership counts
+            collections = set_info.get("collections", {}) or {}
             return {
+                "Set Name (BrickSet)": set_info.get("name", "N/A"),
                 "Pieces": set_info.get("pieces", "N/A"),
                 "Minifigs": set_info.get("minifigs", "N/A"),
                 "BrickSet Theme": set_info.get("theme", "N/A"),
                 "BrickSet Year": set_info.get("year", "N/A"),
                 "BrickSet Rating": set_info.get("rating", "N/A"),
+                "Users Owned": collections.get("ownedBy", "N/A"),
+                "Users Wanted": collections.get("wantedBy", "N/A"),
             }
     except Exception:
         # Swallow errors and return N/A values if any exception occurs
         pass
     return {
+        "Set Name (BrickSet)": "N/A",
         "Pieces": "N/A",
         "Minifigs": "N/A",
         "BrickSet Theme": "N/A",
         "BrickSet Year": "N/A",
         "BrickSet Rating": "N/A",
+        "Users Owned": "N/A",
+        "Users Wanted": "N/A",
     }
 
 
