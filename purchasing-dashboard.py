@@ -214,11 +214,11 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
             # Extract nested collection ownership counts
             collections = set_info.get("collections", {}) or {}
             return {
-                "Set Name": set_info.get("name", "N/A"),
+                "Set Name (BrickSet)": set_info.get("name", "N/A"),
                 "Pieces": set_info.get("pieces", "N/A"),
                 "Minifigs": set_info.get("minifigs", "N/A"),
-                "Theme": set_info.get("theme", "N/A"),
-                "Release Year": set_info.get("year", "N/A"),
+                "BrickSet Theme": set_info.get("theme", "N/A"),
+                "BrickSet Year": set_info.get("year", "N/A"),
                 "BrickSet Rating": set_info.get("rating", "N/A"),
                 "Users Owned": collections.get("ownedBy", "N/A"),
                 "Users Wanted": collections.get("wantedBy", "N/A"),
@@ -227,11 +227,11 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
         # Swallow errors and return N/A values if any exception occurs
         pass
     return {
-        "Set Name": "N/A",
+        "Set Name (BrickSet)": "N/A",
         "Pieces": "N/A",
         "Minifigs": "N/A",
-        "Theme": "N/A",
-        "Release Year": "N/A",
+        "BrickSet Theme": "N/A",
+        "BrickSet Year": "N/A",
         "BrickSet Rating": "N/A",
         "Users Owned": "N/A",
         "Users Wanted": "N/A",
@@ -281,12 +281,12 @@ def fetch_brickeconomy_details(
         data = resp.json().get("data") if resp.status_code == 200 else None
         if data:
             return {
-                "Set Name": data.get("name", "N/A"),
-                "Theme": data.get("theme", "N/A"),
-                "Subtheme": data.get("subtheme", "N/A"),
-                "Year": data.get("year", "N/A"),
-                "Pieces": data.get("pieces_count", "N/A"),
-                "Minifigs": data.get("minifigs_count", "N/A"),
+                "Set Name (BE)": data.get("name", "N/A"),
+                "Theme (BE)": data.get("theme", "N/A"),
+                "Subtheme (BE)": data.get("subtheme", "N/A"),
+                "Year (BE)": data.get("year", "N/A"),
+                "Pieces (BE)": data.get("pieces_count", "N/A"),
+                "Minifigs (BE)": data.get("minifigs_count", "N/A"),
                 "Retail Price (US)": data.get("retail_price_us", "N/A"),
                 "Current Value New": data.get("current_value_new", "N/A"),
                 "Current Value Used": data.get("current_value_used", "N/A"),
@@ -298,13 +298,13 @@ def fetch_brickeconomy_details(
     except Exception:
         pass
     return {
-        "Set Name": "N/A",
-        "Theme": "N/A",
-        "Subtheme": "N/A",
-        "Year": "N/A",
-        "Pieces": "N/A",
-        "Minifigs": "N/A",
-        "Retail Price": "N/A",
+        "Set Name (BE)": "N/A",
+        "Theme (BE)": "N/A",
+        "Subtheme (BE)": "N/A",
+        "Year (BE)": "N/A",
+        "Pieces (BE)": "N/A",
+        "Minifigs (BE)": "N/A",
+        "Retail Price (US)": "N/A",
         "Current Value New": "N/A",
         "Current Value Used": "N/A",
         "Forecast New 2y": "N/A",
@@ -323,25 +323,36 @@ st.set_page_config(page_title="LEGO Set Dashboard", layout="wide")
 # Sidebar credentials
 st.sidebar.header("API Credentials")
 st.sidebar.subheader("BrickLink API")
-consumer_key = st.sidebar.text_input("Consumer Key", type="password")
-consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
+
+# Read the BrickLink consumer key and consumer secret from Streamlit secrets.
+# These should be defined in `.streamlit/secrets.toml` under the [bricklink] section:
+# consumer_key = "..."
+# consumer_secret = "..."
+bricklink_secrets = st.secrets.get("bricklink", {})
+consumer_key = bricklink_secrets.get("consumer_key", "")
+consumer_secret = bricklink_secrets.get("consumer_secret", "")
+
+# The user must still enter the short-lived token and token secret at runtime.
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 st.sidebar.subheader("BrickSet API")
-# If the key is stored in secrets, use that. Otherwise allow manual entry.
-default_brickset_key = (
-    st.secrets["brickset"]["api_key"]
-    if "brickset" in st.secrets and "api_key" in st.secrets["brickset"]
-    else ""
-)
-brickset_key = st.sidebar.text_input(
-    "BrickSet API Key",
-    type="password",
-    value=default_brickset_key,
-)
+
+# Read the BrickSet API key from secrets. It should be defined in
+# `.streamlit/secrets.toml` under [brickset] as api_key = "..."
+brickset_secrets = st.secrets.get("brickset", {})
+brickset_key = brickset_secrets.get("api_key", "")
+
+# If the key is not found, display a warning so the user knows to add it.
+if not brickset_key:
+    st.sidebar.warning(
+        "BrickSet API key not found in secrets. Please add it to your secrets file."
+    )
 
 st.sidebar.subheader("BrickEconomy API")
+# BrickEconomy API key is provided manually for security.  Users should
+# paste their BrickEconomy key here.  The app does not persist this
+# value anywhere.
 brickeconomy_key = st.sidebar.text_input(
     "BrickEconomy API Key", type="password"
 )
@@ -372,7 +383,7 @@ st.markdown(
 # Title
 st.title("LEGO Set Price & Metadata Dashboard")
 
-# Tabs for BrickLink and BrickSet
+# Tabs for BrickLink, BrickSet and BrickEconomy
 tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet", "BrickEconomy"])
 
 # -----------------------------------------------------------------------------
@@ -380,6 +391,12 @@ tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet"
 # -----------------------------------------------------------------------------
 with tab_bricklink:
     st.header("BrickLink Data")
+    st.caption(
+        "Enter your BrickLink API credentials in the sidebar and supply one or more "
+        "set numbers. Results include current and sold prices, quantities, and links "
+        "back to BrickLink."
+    )
+
     set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated):",
         placeholder="e.g., 10276, 75192, 21309",
@@ -399,13 +416,17 @@ with tab_bricklink:
             if results:
                 df = pd.DataFrame(results)
                 st.success("BrickLink data loaded successfully")
-                # Display with HTML to render images and links
-                st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
-                # Prepare CSV for download (strip HTML)
-                df_csv = df.copy()
-                df_csv["Set Name"] = df_csv["Set Name"].str.extract(r'">(.*?)</a>')
-                df_csv["Set Image"] = df_csv["Set Image"].str.extract(r'src="(.*?)"')
-                csv = df_csv.to_csv(index=False).encode("utf-8")
+                # Convert the 'Set Name' HTML link to plain text and drop the image column
+                df_display = df.copy()
+                # Extract the inner text from the anchor tag for display
+                df_display["Set Name"] = df_display["Set Name"].str.extract(r'">(.*?)</a>')
+                # Drop the Set Image column so the table formatting matches other tabs
+                if "Set Image" in df_display.columns:
+                    df_display = df_display.drop(columns=["Set Image"])  # remove image
+                # Show the data using Streamlit's built-in dataframe component
+                st.dataframe(df_display)
+                # Prepare CSV for download using the same cleaned DataFrame
+                csv = df_display.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Download BrickLink Data as CSV",
                     data=csv,
@@ -424,6 +445,11 @@ with tab_bricklink:
 # -----------------------------------------------------------------------------
 with tab_brickset:
     st.header("BrickSet Data")
+    st.caption(
+        "Enter your BrickSet API key in the sidebar. Provide one or more set "
+        "numbers to retrieve official metadata such as piece counts, minifig counts, "
+        "themes, years, and ratings. You can cache your key in ``secrets.toml``."
+    )
     bs_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
         placeholder="e.g., 10276, 75192, 21309",
@@ -465,6 +491,11 @@ with tab_brickset:
 # -----------------------------------------------------------------------------
 with tab_brickeconomy:
     st.header("BrickEconomy Data")
+    st.caption(
+        "Enter LEGO set numbers and your BrickEconomy API key in the sidebar to "
+        "retrieve pricing and valuation metrics. Optionally choose a currency; "
+        "USD is the default."
+    )
 
     # Input for set numbers
     be_set_input = st.text_input(
