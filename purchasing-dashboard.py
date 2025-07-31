@@ -332,12 +332,12 @@ token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 st.sidebar.subheader("BrickSet API")
 # BrickSet API key is also entered manually. This app does not persist the key.
-brickset_key = st.sidebar.text_input(type="password")
+brickset_key = st.sidebar.text_input("BrickSet API", type="password")
 
 st.sidebar.subheader("BrickEconomy API")
 # BrickEconomy API key is provided manually for security. Users should
 # paste their BrickEconomy key here. The app does not persist this value.
-brickeconomy_key = st.sidebar.text_input(type="password")
+brickeconomy_key = st.sidebar.text_input("BrickEconomy API", type="password")
 
 with st.sidebar.expander("Show Current IP Address"):
     try:
