@@ -281,12 +281,12 @@ def fetch_brickeconomy_details(
         data = resp.json().get("data") if resp.status_code == 200 else None
         if data:
             return {
-                "Set Name (BE)": data.get("name", "N/A"),
-                "Theme (BE)": data.get("theme", "N/A"),
-                "Subtheme (BE)": data.get("subtheme", "N/A"),
-                "Year (BE)": data.get("year", "N/A"),
-                "Pieces (BE)": data.get("pieces_count", "N/A"),
-                "Minifigs (BE)": data.get("minifigs_count", "N/A"),
+                "Set Name": data.get("name", "N/A"),
+                "Theme": data.get("theme", "N/A"),
+                "Subtheme": data.get("subtheme", "N/A"),
+                "Year": data.get("year", "N/A"),
+                "Pieces": data.get("pieces_count", "N/A"),
+                "Minifigs": data.get("minifigs_count", "N/A"),
                 "Retail Price (US)": data.get("retail_price_us", "N/A"),
                 "Current Value New": data.get("current_value_new", "N/A"),
                 "Current Value Used": data.get("current_value_used", "N/A"),
@@ -298,13 +298,13 @@ def fetch_brickeconomy_details(
     except Exception:
         pass
     return {
-        "Set Name (BE)": "N/A",
-        "Theme (BE)": "N/A",
-        "Subtheme (BE)": "N/A",
-        "Year (BE)": "N/A",
-        "Pieces (BE)": "N/A",
-        "Minifigs (BE)": "N/A",
-        "Retail Price (US)": "N/A",
+        "Set Name": "N/A",
+        "Theme": "N/A",
+        "Subtheme": "N/A",
+        "Year": "N/A",
+        "Pieces": "N/A",
+        "Minifigs": "N/A",
+        "Retail Price": "N/A",
         "Current Value New": "N/A",
         "Current Value Used": "N/A",
         "Forecast New 2y": "N/A",
@@ -342,9 +342,6 @@ brickset_key = st.sidebar.text_input(
 )
 
 st.sidebar.subheader("BrickEconomy API")
-# BrickEconomy API key is provided manually for security.  Users should
-# paste their BrickEconomy key here.  The app does not persist this
-# value anywhere.
 brickeconomy_key = st.sidebar.text_input(
     "BrickEconomy API Key", type="password"
 )
@@ -383,12 +380,6 @@ tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet"
 # -----------------------------------------------------------------------------
 with tab_bricklink:
     st.header("BrickLink Data")
-    st.caption(
-        "Enter your BrickLink API credentials in the sidebar and supply one or more "
-        "set numbers. Results include current and sold prices, quantities, and links "
-        "back to BrickLink."
-    )
-
     set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated):",
         placeholder="e.g., 10276, 75192, 21309",
@@ -433,11 +424,6 @@ with tab_bricklink:
 # -----------------------------------------------------------------------------
 with tab_brickset:
     st.header("BrickSet Data")
-    st.caption(
-        "Enter your BrickSet API key in the sidebar. Provide one or more set "
-        "numbers to retrieve official metadata such as piece counts, minifig counts, "
-        "themes, years, and ratings. You can cache your key in ``secrets.toml``."
-    )
     bs_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
         placeholder="e.g., 10276, 75192, 21309",
