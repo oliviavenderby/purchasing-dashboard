@@ -323,18 +323,18 @@ st.set_page_config(page_title="LEGO Set Dashboard", layout="wide")
 # Sidebar credentials
 st.sidebar.header("API Credentials")
 
-st.sidebar.subheader("BrickLink API")
+st.sidebar.subheader("BrickLink")
 # For security, all BrickLink credentials are entered manually in the sidebar.
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
-st.sidebar.subheader("BrickSet API")
+st.sidebar.subheader("BrickSet")
 # BrickSet API key is also entered manually. This app does not persist the key.
 brickset_key = st.sidebar.text_input("BrickSet API", type="password")
 
-st.sidebar.subheader("BrickEconomy API")
+st.sidebar.subheader("BrickEconomy")
 # BrickEconomy API key is provided manually for security. Users should
 # paste their BrickEconomy key here. The app does not persist this value.
 brickeconomy_key = st.sidebar.text_input("BrickEconomy API", type="password")
