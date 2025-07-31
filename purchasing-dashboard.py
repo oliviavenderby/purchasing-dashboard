@@ -239,6 +239,82 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
 
 
 ###############################################################################
+# BrickEconomy API
+###############################################################################
+
+def fetch_brickeconomy_details(
+    set_number: str, api_key: str, currency: str = "USD"
+) -> dict:
+    """Fetch pricing and value information from the BrickEconomy API.
+
+    The BrickEconomy API uses a simple REST endpoint: ``/api/v1/set/<set number>``.
+    It requires an `x-apikey` header for authentication and a `User-Agent` header.
+    Optionally, a `currency` query parameter can be provided to retrieve values
+    in a specific currency.  The endpoint returns a JSON object under the
+    ``data`` key containing information such as retail prices, current values,
+    forecast values and growth metrics【231053118022290†L274-L457】.
+
+    Args:
+        set_number: The LEGO set number, including variant (e.g. "75192-1").
+        api_key: The BrickEconomy API key.
+        currency: Optional ISO 4217 currency code (e.g. "USD", "EUR").
+
+    Returns:
+        A dictionary with selected BrickEconomy metrics, or N/A values on error.
+    """
+    # Normalize set number to include variant if missing
+    set_number = set_number.strip()
+    if "-" not in set_number:
+        set_number = f"{set_number}-1"
+
+    base_url = "https://www.brickeconomy.com/api/v1/set/"
+    url = f"{base_url}{set_number}"
+    params = {"currency": currency} if currency else {}
+    headers = {
+        "accept": "application/json",
+        "x-apikey": api_key,
+        # Use a simple user-agent string as required by the API
+        "User-Agent": "ReUseBricks-Streamlit-App/1.0",
+    }
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=20)
+        data = resp.json().get("data") if resp.status_code == 200 else None
+        if data:
+            return {
+                "Set Name (BE)": data.get("name", "N/A"),
+                "Theme (BE)": data.get("theme", "N/A"),
+                "Subtheme (BE)": data.get("subtheme", "N/A"),
+                "Year (BE)": data.get("year", "N/A"),
+                "Pieces (BE)": data.get("pieces_count", "N/A"),
+                "Minifigs (BE)": data.get("minifigs_count", "N/A"),
+                "Retail Price (US)": data.get("retail_price_us", "N/A"),
+                "Current Value New": data.get("current_value_new", "N/A"),
+                "Current Value Used": data.get("current_value_used", "N/A"),
+                "Forecast New 2y": data.get("forecast_value_new_2_years", "N/A"),
+                "Forecast New 5y": data.get("forecast_value_new_5_years", "N/A"),
+                "Growth Last Year %": data.get("rolling_growth_lastyear", "N/A"),
+                "Growth 12 Months %": data.get("rolling_growth_12months", "N/A"),
+            }
+    except Exception:
+        pass
+    return {
+        "Set Name (BE)": "N/A",
+        "Theme (BE)": "N/A",
+        "Subtheme (BE)": "N/A",
+        "Year (BE)": "N/A",
+        "Pieces (BE)": "N/A",
+        "Minifigs (BE)": "N/A",
+        "Retail Price (US)": "N/A",
+        "Current Value New": "N/A",
+        "Current Value Used": "N/A",
+        "Forecast New 2y": "N/A",
+        "Forecast New 5y": "N/A",
+        "Growth Last Year %": "N/A",
+        "Growth 12 Months %": "N/A",
+    }
+
+
+###############################################################################
 # Streamlit application layout
 ###############################################################################
 
@@ -263,6 +339,14 @@ brickset_key = st.sidebar.text_input(
     "BrickSet API Key",
     type="password",
     value=default_brickset_key,
+)
+
+st.sidebar.subheader("BrickEconomy API")
+# BrickEconomy API key is provided manually for security.  Users should
+# paste their BrickEconomy key here.  The app does not persist this
+# value anywhere.
+brickeconomy_key = st.sidebar.text_input(
+    "BrickEconomy API Key", type="password"
 )
 
 with st.sidebar.expander("Show Current IP Address"):
@@ -292,7 +376,7 @@ st.markdown(
 st.title("LEGO Set Price & Metadata Dashboard")
 
 # Tabs for BrickLink and BrickSet
-tab_bricklink, tab_brickset = st.tabs(["BrickLink", "BrickSet"])
+tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet", "BrickEconomy"])
 
 # -----------------------------------------------------------------------------
 # BrickLink Tab
@@ -388,6 +472,59 @@ with tab_brickset:
             st.warning(
                 "Please enter your BrickSet API key (in the sidebar) and at least "
                 "one set number."
+            )
+
+# -----------------------------------------------------------------------------
+# BrickEconomy Tab
+# -----------------------------------------------------------------------------
+with tab_brickeconomy:
+    st.header("BrickEconomy Data")
+    st.caption(
+        "Enter LEGO set numbers and your BrickEconomy API key in the sidebar to "
+        "retrieve pricing and valuation metrics. Optionally choose a currency; "
+        "USD is the default."
+    )
+
+    # Input for set numbers
+    be_set_input = st.text_input(
+        "Enter LEGO Set Numbers (comma-separated) for BrickEconomy:",
+        placeholder="e.g., 10276, 75192, 21309",
+    )
+    # Allow user to select currency; default to USD
+    currency = st.selectbox(
+        "Select currency for valuations:",
+        options=["USD", "GBP", "CAD", "AUD", "CNY", "KRW", "EUR", "JPY"],
+        index=0,
+    )
+    if st.button("Fetch BrickEconomy Data"):
+        # Require both the API key (entered in the sidebar) and set numbers
+        if brickeconomy_key and be_set_input:
+            set_raw_list = [s.strip() for s in be_set_input.split(",") if s.strip()]
+            results = []
+            with st.spinner("Fetching BrickEconomy data..."):
+                for s in set_raw_list:
+                    # Fetch data for each set and append normalized set number
+                    data = fetch_brickeconomy_details(s, brickeconomy_key, currency)
+                    data.update({"Set Number": normalize_set_number(s)})
+                    results.append(data)
+            if results:
+                df = pd.DataFrame(results)
+                st.success("BrickEconomy data loaded successfully")
+                st.dataframe(df)
+                # Prepare CSV download
+                csv = df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download BrickEconomy Data as CSV",
+                    data=csv,
+                    file_name="brickeconomy_data.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.warning("No valid BrickEconomy results found.")
+        else:
+            st.warning(
+                "Please enter your BrickEconomy API key (in the sidebar) and at "
+                "least one set number."
             )
 
 # Footer
