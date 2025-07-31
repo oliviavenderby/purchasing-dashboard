@@ -425,7 +425,7 @@ with tab_brickset:
     st.header("BrickSet Data")
     
     bs_set_input = st.text_input(
-        "Enter LEGO Set Numbers (comma-separated):",
+        "Enter LEGO Set Numbers (comma-separated)",
         placeholder="e.g., 10276, 75192, 21309",
     )
     # Button to trigger BrickSet data fetch
