@@ -337,7 +337,7 @@ with tab_brickset:
     st.caption(
         "Enter your BrickSet API key in the sidebar. Provide one or more set "
         "numbers to retrieve official metadata such as piece counts, minifig counts, "
-        "themes, years, and ratings. You can cache your key in ``secrets.toml``.""
+        "themes, years, and ratings. You can cache your key in ``secrets.toml``."
     )
     bs_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
