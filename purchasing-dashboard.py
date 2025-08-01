@@ -513,34 +513,39 @@ with tab_brickeconomy:
 # -----------------------------------------------------------------------------
 # Scoring Tab
 # -----------------------------------------------------------------------------
-with tab_scoring:
+with tab_score:
     st.header("LEGO Set Scoring Metrics")
 
     scoring_input = st.text_input(
-        "Enter LEGO Set Numbers (comma-separated) for Scoring:",
+        "Enter LEGO Set Numbers (comma-separated):",
         placeholder="e.g., 10276, 75192, 21309",
         key="scoring_set_input",
     )
 
+    # Initialize storage
+    demand_results, rating_results = [], []
+
+    # Demand Metrics Calculation
     if st.button("Calculate Demand Metrics"):
         if brickset_key and scoring_input:
             set_raw_list = [s.strip() for s in scoring_input.split(",") if s.strip()]
-            results = []
-            with st.spinner("Fetching data and calculating scores..."):
+            with st.spinner("Fetching demand data..."):
                 for s in set_raw_list:
                     s_norm = normalize_set_number(s)
                     bset_data = fetch_brickset_details(s_norm, brickset_key)
 
                     try:
-                        owned = float(bset_data.get("Users Owned", 0))
-                        wanted = float(bset_data.get("Users Wanted", 0))
-                        demand_ratio = wanted / owned if owned else 0
-                        demand_percent = ((owned + wanted) / 357478) * 100
+                    owned = float(bset_data.get("Users Owned", 0))
+                    wanted = float(bset_data.get("Users Wanted", 0))
+                    demand_ratio = wanted / owned if owned else 0
+                    demand_percent = ((owned + wanted) / 357478) * 100((owned + wanted) / 357478) * 100
                     except Exception:
-                        demand_ratio = 0
-                        demand_percent = 0
+                    owned = 0
+                    wanted = 0
+                    demand_ratio = 0
+                    demand_percent = 0
 
-                    results.append({
+                    demand_results.append({
                         "Set Number": s_norm,
                         "Brickset Owned": owned,
                         "Brickset Wanted": wanted,
@@ -548,22 +553,17 @@ with tab_scoring:
                         "Demand %": round(demand_percent, 2),
                     })
 
-            if results:
-                df = pd.DataFrame(results)
-                st.success("Scoring complete")
-                st.dataframe(df)
-                csv = df.to_csv(index=False).encode("utf-8")
+            if demand_results:
+                df_demand = pd.DataFrame(demand_results)
+                st.subheader("Demand Metrics")
+                st.dataframe(df_demand)
+                csv = df_demand.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    label="Download Scoring Data as CSV",
+                    label="Download Demand Metrics as CSV",
                     data=csv,
-                    file_name="lego_set_scoring.csv",
+                    file_name="demand_metrics.csv",
                     mime="text/csv",
                 )
-            else:
-                st.warning("No results computed.")
-        else:
-            st.warning("Please enter your BrickSet API key and at least one set number.")
-
 
 # Footer
 st.markdown("---")
