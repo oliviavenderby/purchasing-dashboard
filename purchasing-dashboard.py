@@ -564,7 +564,6 @@ with tab_scoring:
         else:
             st.warning("Please enter your BrickSet API key and at least one set number.")
 
-
 # Footer
 st.markdown("---")
 st.caption(
