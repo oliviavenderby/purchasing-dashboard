@@ -365,8 +365,8 @@ st.markdown(
 # Title
 st.title("LEGO Set Price & Metadata Dashboard")
 
-# Tabs for BrickLink, BrickSet and BrickEconomy
-tab_bricklink, tab_brickset, tab_brickeconomy = st.tabs(["BrickLink", "BrickSet", "BrickEconomy"])
+# Tabs for BrickLink, BrickSet, BrickEconomy, Scoring
+tab_bricklink, tab_brickset, tab_brickeconomy, tab_scoring = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 
 # -----------------------------------------------------------------------------
 # BrickLink Tab
@@ -510,14 +510,10 @@ with tab_brickeconomy:
                 "least one set number."
             )
 
-score_tab_label = "Scoring"
-tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", score_tab_label])
-tab_bricklink, tab_brickset, tab_brickeconomy, tab_score = tabs
-
 # -----------------------------------------------------------------------------
 # Scoring Tab
 # -----------------------------------------------------------------------------
-with tab_score:
+with tab_scoring:
     st.header("LEGO Set Scoring Metrics")
 
     scoring_input = st.text_input(
