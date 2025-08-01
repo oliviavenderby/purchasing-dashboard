@@ -532,18 +532,17 @@ with tab_scoring:
                     bset_data = fetch_brickset_details(s_norm, brickset_key)
 
                     try:
-                        owned_raw = bset_data.get("Users Owned", "N/A")
-                        wanted_raw = bset_data.get("Users Wanted", "N/A")
+                        owned_raw = bset_data.get("Users Owned")
+                        wanted_raw = bset_data.get("Users Wanted")
 
-                        if owned_raw == "N/A" or wanted_raw == "N/A":
-                            owned = wanted = demand_ratio = demand_percent = "N/A"
-                        else:
+                        try:
                             owned = float(owned_raw)
                             wanted = float(wanted_raw)
                             demand_ratio = wanted / owned if owned else 0
                             demand_percent = ((owned + wanted) / 357478) * 100
+                        except (TypeError, ValueError):
+                            owned = wanted = demand_ratio = demand_percent = "N/A"
                     except Exception:
-                        owned = wanted = demand_ratio = demand_percent = "N/A"
                         owned = wanted = demand_ratio = demand_percent = "N/A"
 
                     results.append({
@@ -569,7 +568,6 @@ with tab_scoring:
                 st.warning("No results computed.")
         else:
             st.warning("Please enter your BrickSet API key and at least one set number.")
-
 
 # Footer
 st.markdown("---")
