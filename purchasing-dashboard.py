@@ -532,20 +532,26 @@ with tab_scoring:
                     bset_data = fetch_brickset_details(s_norm, brickset_key)
 
                     try:
-                        owned = float(bset_data.get("Users Owned", 0))
-                        wanted = float(bset_data.get("Users Wanted", 0))
-                        demand_ratio = wanted / owned if owned else 0
-                        demand_percent = ((owned + wanted) / 357478) * 100
+                        owned_raw = bset_data.get("Users Owned", "N/A")
+                        wanted_raw = bset_data.get("Users Wanted", "N/A")
+
+                        if owned_raw == "N/A" or wanted_raw == "N/A":
+                            owned = wanted = demand_ratio = demand_percent = "N/A"
+                        else:
+                            owned = float(owned_raw)
+                            wanted = float(wanted_raw)
+                            demand_ratio = wanted / owned if owned else 0
+                            demand_percent = ((owned + wanted) / 357478) * 100
                     except Exception:
-                        demand_ratio = 0
-                        demand_percent = 0
+                        owned = wanted = demand_ratio = demand_percent = "N/A"
+                        owned = wanted = demand_ratio = demand_percent = "N/A"
 
                     results.append({
                         "Set Number": s_norm,
                         "Brickset Owned": owned,
                         "Brickset Wanted": wanted,
-                        "Demand Ratio": round(demand_ratio, 3),
-                        "Demand %": round(demand_percent, 2),
+                        "Demand Ratio": round(demand_ratio, 3) if isinstance(demand_ratio, (float, int)) else "N/A",
+                        "Demand %": round(demand_percent, 2) if isinstance(demand_percent, (float, int)) else "N/A",
                     })
 
             if results:
@@ -563,6 +569,7 @@ with tab_scoring:
                 st.warning("No results computed.")
         else:
             st.warning("Please enter your BrickSet API key and at least one set number.")
+
 
 # Footer
 st.markdown("---")
