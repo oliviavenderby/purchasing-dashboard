@@ -510,6 +510,64 @@ with tab_brickeconomy:
                 "least one set number."
             )
 
+score_tab_label = "Scoring"
+tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", score_tab_label])
+tab_bricklink, tab_brickset, tab_brickeconomy, tab_score = tabs
+
+# -----------------------------------------------------------------------------
+# Scoring Tab
+# -----------------------------------------------------------------------------
+with tab_score:
+    st.header("LEGO Set Scoring Metrics")
+
+    scoring_input = st.text_input(
+        "Enter LEGO Set Numbers (comma-separated) for Scoring:",
+        placeholder="e.g., 10276, 75192, 21309",
+        key="scoring_set_input",
+    )
+
+    if st.button("Calculate Scores"):
+        if brickset_key and scoring_input:
+            set_raw_list = [s.strip() for s in scoring_input.split(",") if s.strip()]
+            results = []
+            with st.spinner("Fetching data and calculating scores..."):
+                for s in set_raw_list:
+                    s_norm = normalize_set_number(s)
+                    bset_data = fetch_brickset_details(s_norm, brickset_key)
+
+                    try:
+                        owned = float(bset_data.get("Users Owned", 0))
+                        wanted = float(bset_data.get("Users Wanted", 0))
+                        demand_ratio = wanted / owned if owned else 0
+                        demand_percent = ((owned + wanted) / 357478) * 100
+                    except Exception:
+                        demand_ratio = 0
+                        demand_percent = 0
+
+                    results.append({
+                        "Set Number": s_norm,
+                        "Brickset Owned": owned,
+                        "Brickset Wanted": wanted,
+                        "Demand Ratio": round(demand_ratio, 3),
+                        "Demand %": round(demand_percent, 2),
+                    })
+
+            if results:
+                df = pd.DataFrame(results)
+                st.success("Scoring complete")
+                st.dataframe(df)
+                csv = df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download Scoring Data as CSV",
+                    data=csv,
+                    file_name="lego_set_scoring.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.warning("No results computed.")
+        else:
+            st.warning("Please enter your BrickSet API key and at least one set number.")
+
 # Footer
 st.markdown("---")
 st.caption(
