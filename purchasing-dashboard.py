@@ -250,19 +250,10 @@ def fetch_brickeconomy_details(
     The BrickEconomy API uses a simple REST endpoint: ``/api/v1/set/<set number>``.
     It requires an `x-apikey` header for authentication and a `User-Agent` header.
     Optionally, a `currency` query parameter can be provided to retrieve values
-    in a specific currency.  The endpoint returns a JSON object under the
+    in a specific currency. The endpoint returns a JSON object under the
     ``data`` key containing information such as retail prices, current values,
-    forecast values and growth metrics【231053118022290†L274-L457】.
-
-    Args:
-        set_number: The LEGO set number, including variant (e.g. "75192-1").
-        api_key: The BrickEconomy API key.
-        currency: Optional ISO 4217 currency code (e.g. "USD", "EUR").
-
-    Returns:
-        A dictionary with selected BrickEconomy metrics, or N/A values on error.
+    forecast values and growth metrics.
     """
-    # Normalize set number to include variant if missing
     set_number = set_number.strip()
     if "-" not in set_number:
         set_number = f"{set_number}-1"
@@ -273,13 +264,35 @@ def fetch_brickeconomy_details(
     headers = {
         "accept": "application/json",
         "x-apikey": api_key,
-        # Use a simple user-agent string as required by the API
         "User-Agent": "ReUseBricks-Streamlit-App/1.0",
     }
+
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=20)
         data = resp.json().get("data") if resp.status_code == 200 else None
         if data:
+            current_value_new = data.get("current_value_new")
+            forecast_2y = data.get("forecast_value_new_2_years")
+            forecast_5y = data.get("forecast_value_new_5_years")
+
+            try:
+                growth_2y_pct = (
+                    ((forecast_2y - current_value_new) / current_value_new) * 100
+                    if current_value_new and forecast_2y
+                    else "N/A"
+                )
+            except (TypeError, ZeroDivisionError):
+                growth_2y_pct = "N/A"
+
+            try:
+                growth_5y_pct = (
+                    ((forecast_5y - current_value_new) / current_value_new) * 100
+                    if current_value_new and forecast_5y
+                    else "N/A"
+                )
+            except (TypeError, ZeroDivisionError):
+                growth_5y_pct = "N/A"
+
             return {
                 "Set Name": data.get("name", "N/A"),
                 "Theme": data.get("theme", "N/A"),
@@ -288,17 +301,22 @@ def fetch_brickeconomy_details(
                 "Pieces": data.get("pieces_count", "N/A"),
                 "Minifigs": data.get("minifigs_count", "N/A"),
                 "Retail Price (US)": data.get("retail_price_us", "N/A"),
-                "Current Value New": data.get("current_value_new", "N/A"),
+                "Current Value New": current_value_new if current_value_new else "N/A",
                 "Current Value Used": data.get("current_value_used", "N/A"),
-                "Forecast New 2y": data.get("forecast_value_new_2_years", "N/A"),
-                "Forecast New 5y": data.get("forecast_value_new_5_years", "N/A"),
-                "Forecast Growth New 2y %": data.get("forecast_growth_new_2_years", "N/A"),
-                "Forecast Growth New 5y %": data.get("forecast_growth_new_5_years", "N/A"),
+                "Forecast New 2y": forecast_2y if forecast_2y else "N/A",
+                "Forecast New 5y": forecast_5y if forecast_5y else "N/A",
+                "Forecast Growth New 2y %": round(growth_2y_pct, 2)
+                if isinstance(growth_2y_pct, (float, int))
+                else "N/A",
+                "Forecast Growth New 5y %": round(growth_5y_pct, 2)
+                if isinstance(growth_5y_pct, (float, int))
+                else "N/A",
                 "Growth Last Year %": data.get("rolling_growth_lastyear", "N/A"),
                 "Growth 12 Months %": data.get("rolling_growth_12months", "N/A"),
             }
     except Exception:
         pass
+
     return {
         "Set Name": "N/A",
         "Theme": "N/A",
@@ -316,6 +334,7 @@ def fetch_brickeconomy_details(
         "Growth Last Year %": "N/A",
         "Growth 12 Months %": "N/A",
     }
+
 
 
 ###############################################################################
