@@ -311,6 +311,8 @@ def fetch_brickeconomy_details(
         "Current Value Used": "N/A",
         "Forecast New 2y": "N/A",
         "Forecast New 5y": "N/A",
+        "Forecast Growth New 2y %",
+        "Forecast Growth New 5y %",
         "Growth Last Year %": "N/A",
         "Growth 12 Months %": "N/A",
     }
