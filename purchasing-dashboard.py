@@ -29,12 +29,28 @@ def _get_json(url, *, params=None, auth=None, timeout=20):
     except Exception:
         data = None
     if resp.status_code != 200 or data is None:
-        # Raise so caller can surface in UI
         raise RuntimeError(
-            f"BrickLink API {url} failed: HTTP {resp.status_code} "
-            f"{resp.text[:300]}"
+            f"BrickLink API {url} failed: HTTP {resp.status_code} {resp.text[:300]}"
         )
     return data
+
+
+def _fmt_money(v):
+    return f"${float(v):.2f}" if v is not None else "N/A"
+
+
+def _sum_quantity(price_detail):
+    try:
+        return int(sum(int(x.get("quantity", 0)) for x in (price_detail or []) if isinstance(x, dict)))
+    except Exception:
+        return None
+
+
+def _len_lots(price_detail):
+    try:
+        return int(len(price_detail or []))
+    except Exception:
+        return None
 
 
 ###############################################################################
@@ -68,10 +84,6 @@ def fetch_price_data(set_number: str, auth: OAuth1, guide_type: str, new_or_used
         return {"_error": str(e)}
 
 
-def _fmt_money(v):
-    return f"${float(v):.2f}" if v is not None else "N/A"
-
-
 def fetch_set_data(set_number: str, auth: OAuth1) -> dict:
     """Aggregate BrickLink data for a single set number into a display row."""
     set_number = normalize_set_number(set_number)
@@ -83,13 +95,40 @@ def fetch_set_data(set_number: str, auth: OAuth1) -> dict:
     sold_new    = fetch_price_data(set_number, auth, "sold",  "N")
     sold_used   = fetch_price_data(set_number, auth, "sold",  "U")
 
-    cn_avg = current_new.get("avg_price", None)  # allow 0.0
+    # Money fields (allow 0.0)
+    cn_avg = current_new.get("avg_price", None)
     cu_avg = current_used.get("avg_price", None)
     sn_avg = sold_new.get("avg_price", None)
     su_avg = sold_used.get("avg_price", None)
 
+    # Robust lots & quantity with fallbacks to price_detail
+    cn_pd = current_new.get("price_detail", [])
+    cu_pd = current_used.get("price_detail", [])
+    sn_pd = sold_new.get("price_detail", [])
+    su_pd = sold_used.get("price_detail", [])
+
+    qty_new   = current_new.get("total_quantity")
+    qty_used  = current_used.get("total_quantity")
+    qty_snew  = sold_new.get("total_quantity")
+    qty_sused = sold_used.get("total_quantity")
+
+    lots_new   = current_new.get("total_lots")
+    lots_used  = current_used.get("total_lots")
+    times_snew = sold_new.get("total_lots")
+    times_sused= sold_used.get("total_lots")
+
+    if qty_new   is None: qty_new   = _sum_quantity(cn_pd)
+    if qty_used  is None: qty_used  = _sum_quantity(cu_pd)
+    if qty_snew  is None: qty_snew  = _sum_quantity(sn_pd)
+    if qty_sused is None: qty_sused = _sum_quantity(su_pd)
+
+    if lots_new   is None: lots_new   = _len_lots(cn_pd)
+    if lots_used  is None: lots_used  = _len_lots(cu_pd)
+    if times_snew is None: times_snew = _len_lots(sn_pd)
+    if times_sused is None: times_sused = _len_lots(su_pd)
+
     link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
-    set_name_text = metadata.get("Set Name") or "N/A"
+    set_name_text = (metadata.get("Set Name") or "N/A")
 
     row = {
         "Set Image": f'<img src="{image_url}" width="200"/>',
@@ -99,24 +138,23 @@ def fetch_set_data(set_number: str, auth: OAuth1) -> dict:
 
         # Current (stock)
         "Current Avg Price (New)":  _fmt_money(cn_avg) if cn_avg is not None else "N/A",
-        "Qty (New)":                 current_new.get("total_quantity", "N/A"),
-        "Lots (New)":                current_new.get("total_lots", "N/A"),
+        "Qty (New)":                 qty_new if qty_new is not None else "N/A",
+        "Lots (New)":                lots_new if lots_new is not None else "N/A",
 
         "Current Avg Price (Used)": _fmt_money(cu_avg) if cu_avg is not None else "N/A",
-        "Qty (Used)":                current_used.get("total_quantity", "N/A"),
-        "Lots (Used)":               current_used.get("total_lots", "N/A"),
+        "Qty (Used)":                qty_used if qty_used is not None else "N/A",
+        "Lots (Used)":               lots_used if lots_used is not None else "N/A",
 
         # Sold (last 6 months)
         "Last 6 Months Sales - Avg Price (New)":  _fmt_money(sn_avg) if sn_avg is not None else "N/A",
-        "Sold Qty (New)":                          sold_new.get("total_quantity", "N/A"),
-        "Times Sold (New)":                        sold_new.get("total_lots", "N/A"),  # or len(price_detail)
+        "Sold Qty (New)":                          qty_snew if qty_snew is not None else "N/A",
+        "Times Sold (New)":                        times_snew if times_snew is not None else "N/A",
 
         "Last 6 Months Sales - Avg Price (Used)": _fmt_money(su_avg) if su_avg is not None else "N/A",
-        "Sold Qty (Used)":                         sold_used.get("total_quantity", "N/A"),
-        "Times Sold (Used)":                       sold_used.get("total_lots", "N/A"),
+        "Sold Qty (Used)":                         qty_sused if qty_sused is not None else "N/A",
+        "Times Sold (Used)":                       times_sused if times_sused is not None else "N/A",
     }
 
-    # Bubble up any errors so the UI can show them
     for d in (metadata, current_new, current_used, sold_new, sold_used):
         if isinstance(d.get("_error"), str):
             row.setdefault("_errors", []).append(d["_error"])
@@ -326,7 +364,6 @@ with tab_bricklink:
             if results:
                 df = pd.DataFrame(results)
                 st.success("BrickLink data loaded successfully")
-                # For display: strip anchor text, drop image column
                 df_display = df.copy()
                 df_display["Set Name"] = df_display["Set Name"].str.extract(r'">(.*?)</a>')
                 if "Set Image" in df_display.columns:
