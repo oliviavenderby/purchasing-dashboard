@@ -10,208 +10,133 @@ from requests_oauthlib import OAuth1
 ###############################################################################
 
 def normalize_set_number(s: str) -> str:
-    """Normalize a LEGO set number to include a variant (e.g., 10276 -> 10276-1).
-
-    BrickLink's API expects set numbers in the form ``number-variant``.
-    If the user does not supply a variant, ``-1`` is appended.
-
-    Args:
-        s: Raw set number entered by the user.
-
-    Returns:
-        Normalized set number.
-    """
+    """Normalize a LEGO set number to include a variant (e.g., 10276 -> 10276-1)."""
     s = s.strip()
     return s if "-" in s else f"{s}-1"
 
 
+def _get_json(url, *, params=None, auth=None, timeout=20):
+    """GET JSON with clear errors (no silent failures)."""
+    resp = requests.get(
+        url,
+        params=params,
+        auth=auth,
+        timeout=timeout,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        data = resp.json()
+    except Exception:
+        data = None
+    if resp.status_code != 200 or data is None:
+        # Raise so caller can surface in UI
+        raise RuntimeError(
+            f"BrickLink API {url} failed: HTTP {resp.status_code} "
+            f"{resp.text[:300]}"
+        )
+    return data
+
+
+###############################################################################
+# BrickLink API helpers
+###############################################################################
+
 def fetch_set_metadata(set_number: str, auth: OAuth1) -> dict:
-    """Fetch basic metadata for a set from the BrickLink API.
-
-    Args:
-        set_number: Normalized set number (e.g., "10276-1").
-        auth: OAuth1 authentication object.
-
-    Returns:
-        A dictionary containing the set name and category ID, or placeholders
-        if the request fails.
-    """
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
     try:
-        resp = requests.get(url, auth=auth)
-        if resp.status_code == 200:
-            data = resp.json().get("data", {})
-            return {
-                "Set Name": data.get("name", "N/A"),
-                "Category ID": data.get("category_id", "N/A"),
-            }
-    except Exception:
-        pass
-    return {
-        "Set Name": "Error",
-        "Category ID": "Error",
-    }
+        data = _get_json(url, auth=auth).get("data", {})
+        return {"Set Name": data.get("name"), "Category ID": data.get("category_id")}
+    except Exception as e:
+        return {"Set Name": None, "Category ID": None, "_error": str(e)}
 
 
 def fetch_image_url(set_number: str, auth: OAuth1) -> str:
-    """Retrieve the first thumbnail image URL for a set from BrickLink.
-
-    Args:
-        set_number: Normalized set number.
-        auth: OAuth1 authentication object.
-
-    Returns:
-        A URL string to a thumbnail image, or an empty string on failure.
-    """
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/images/0"
     try:
-        resp = requests.get(url, auth=auth)
-        if resp.status_code == 200:
-            return resp.json().get("data", {}).get("thumbnail_url", "")
+        return _get_json(url, auth=auth).get("data", {}).get("thumbnail_url") or ""
     except Exception:
-        pass
-    return ""
+        return ""
 
 
-def fetch_price_data(
-    set_number: str,
-    auth: OAuth1,
-    guide_type: str,
-    new_or_used: str,
-) -> dict:
-    """Fetch price information for a set from the BrickLink API.
-
-    The BrickLink API allows querying both current stock and sold prices,
-    split by new/used condition. This helper encapsulates those calls.
-
-    Args:
-        set_number: Normalized set number.
-        auth: OAuth1 authentication object.
-        guide_type: Either ``"stock"`` for current prices or ``"sold"``
-            for last six months sales data.
-        new_or_used: ``"N"`` for new condition or ``"U"`` for used.
-
-    Returns:
-        A dictionary of pricing information, or an empty dictionary on failure.
-    """
+def fetch_price_data(set_number: str, auth: OAuth1, guide_type: str, new_or_used: str) -> dict:
+    """guide_type: 'stock' (current) or 'sold' (last 6 months). new_or_used: 'N' or 'U'."""
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
-    params = {
-        "guide_type": guide_type,
-        "new_or_used": new_or_used,
-    }
+    params = {"guide_type": guide_type, "new_or_used": new_or_used}
     try:
-        resp = requests.get(url, params=params, auth=auth)
-        if resp.status_code == 200:
-            return resp.json().get("data", {})
-    except Exception:
-        pass
-    return {}
+        return _get_json(url, params=params, auth=auth).get("data", {}) or {}
+    except Exception as e:
+        return {"_error": str(e)}
+
+
+def _fmt_money(v):
+    return f"${float(v):.2f}" if v is not None else "N/A"
 
 
 def fetch_set_data(set_number: str, auth: OAuth1) -> dict:
-    """Aggregate BrickLink data for a single set number.
-
-    Combines metadata, image URL, current price (new/used) and sold price
-    (new/used) into a single dictionary with human-friendly keys.  The
-    "Set Name" value is wrapped in an anchor tag for linking back to
-    BrickLink's catalog page.
-
-    Args:
-        set_number: Raw set number entered by the user (may omit variant).
-        auth: OAuth1 authentication object.
-
-    Returns:
-        A dictionary with the aggregated data.
-    """
+    """Aggregate BrickLink data for a single set number into a display row."""
     set_number = normalize_set_number(set_number)
     metadata = fetch_set_metadata(set_number, auth)
     image_url = fetch_image_url(set_number, auth)
 
     current_new = fetch_price_data(set_number, auth, "stock", "N")
     current_used = fetch_price_data(set_number, auth, "stock", "U")
-    sold_new = fetch_price_data(set_number, auth, "sold", "N")
-    sold_used = fetch_price_data(set_number, auth, "sold", "U")
+    sold_new    = fetch_price_data(set_number, auth, "sold",  "N")
+    sold_used   = fetch_price_data(set_number, auth, "sold",  "U")
 
-    set_name = metadata.get("Set Name", "N/A")
-    link = (
-        f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
-    )
+    cn_avg = current_new.get("avg_price", None)  # allow 0.0
+    cu_avg = current_used.get("avg_price", None)
+    sn_avg = sold_new.get("avg_price", None)
+    su_avg = sold_used.get("avg_price", None)
 
-    return {
+    link = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_number}#T=P"
+    set_name_text = metadata.get("Set Name") or "N/A"
+
+    row = {
         "Set Image": f'<img src="{image_url}" width="200"/>',
         "Set Number": set_number,
-        "Set Name": f'<a href="{link}" target="_blank">{set_name}</a>',
-        "Category ID": metadata.get("Category ID", "N/A"),
-        # Current New
-        "Current Avg Price (New)": (
-            f"${float(current_new.get('avg_price', 0)):.2f}"
-            if current_new.get("avg_price")
-            else "N/A"
-        ),
-        "Qty (New)": current_new.get("total_quantity", "N/A"),
-        "Lots (New)": current_new.get("unit_quantity", "N/A"),
-        # Current Used
-        "Current Avg Price (Used)": (
-            f"${float(current_used.get('avg_price', 0)):.2f}"
-            if current_used.get("avg_price")
-            else "N/A"
-        ),
-        "Qty (Used)": current_used.get("total_quantity", "N/A"),
-        "Lots (Used)": current_used.get("unit_quantity", "N/A"),
-        # Last 6 months Sales New
-        "Last 6 Months Sales - Avg Price (New)": (
-            f"${float(sold_new.get('avg_price', 0)):.2f}"
-            if sold_new.get("avg_price")
-            else "N/A"
-        ),
-        "Sold Qty (New)": sold_new.get("total_quantity", "N/A"),
-        "Times Sold (New)": sold_new.get("unit_quantity", "N/A"),
-        # Sold Used
-        "Last 6 Months Sales - Avg Price (Used)": (
-            f"${float(sold_used.get('avg_price', 0)):.2f}"
-            if sold_used.get("avg_price")
-            else "N/A"
-        ),
-        "Sold Qty (Used)": sold_used.get("total_quantity", "N/A"),
-        "Times Sold (Used)": sold_used.get("unit_quantity", "N/A"),
+        "Set Name": f'<a href="{link}" target="_blank">{set_name_text}</a>',
+        "Category ID": metadata.get("Category ID") if metadata.get("Category ID") is not None else "N/A",
+
+        # Current (stock)
+        "Current Avg Price (New)":  _fmt_money(cn_avg) if cn_avg is not None else "N/A",
+        "Qty (New)":                 current_new.get("total_quantity", "N/A"),
+        "Lots (New)":                current_new.get("total_lots", "N/A"),
+
+        "Current Avg Price (Used)": _fmt_money(cu_avg) if cu_avg is not None else "N/A",
+        "Qty (Used)":                current_used.get("total_quantity", "N/A"),
+        "Lots (Used)":               current_used.get("total_lots", "N/A"),
+
+        # Sold (last 6 months)
+        "Last 6 Months Sales - Avg Price (New)":  _fmt_money(sn_avg) if sn_avg is not None else "N/A",
+        "Sold Qty (New)":                          sold_new.get("total_quantity", "N/A"),
+        "Times Sold (New)":                        sold_new.get("total_lots", "N/A"),  # or len(price_detail)
+
+        "Last 6 Months Sales - Avg Price (Used)": _fmt_money(su_avg) if su_avg is not None else "N/A",
+        "Sold Qty (Used)":                         sold_used.get("total_quantity", "N/A"),
+        "Times Sold (Used)":                       sold_used.get("total_lots", "N/A"),
     }
 
+    # Bubble up any errors so the UI can show them
+    for d in (metadata, current_new, current_used, sold_new, sold_used):
+        if isinstance(d.get("_error"), str):
+            row.setdefault("_errors", []).append(d["_error"])
+    return row
+
+
+###############################################################################
+# BrickSet API
+###############################################################################
 
 def fetch_brickset_details(set_number: str, api_key: str) -> dict:
-    """Fetch official metadata for a set from the BrickSet API.
-
-    This function sends a POST request to the BrickSet `getSets` endpoint with
-    three parameters: ``apiKey``, ``userHash``, and a JSON-encoded ``params``
-    string. Even when not retrieving owned or wanted sets, the API requires
-    a ``userHash`` parameter to be present, so an empty string is provided.
-    The request asks for ``extendedData`` to include additional fields such
-    as ratings, tags and descriptions.
-
-    Args:
-        set_number: Normalized set number (e.g. "75192-1").
-        api_key: BrickSet API key.
-
-    Returns:
-        A dictionary with selected BrickSet fields, or N/A placeholders on
-        error.
-    """
+    """Fetch official metadata for a set from the BrickSet API."""
     url = "https://brickset.com/api/v3.asmx/getSets"
-    # Request extended data for a richer response
     params = {"setNumber": set_number, "extendedData": 1}
-    # According to the API documentation, userHash is mandatory even if not used
-    form_data = {
-        "apiKey": api_key,
-        "userHash": "",  # empty user hash since we're not logged in
-        "params": json.dumps(params),
-    }
+    form_data = {"apiKey": api_key, "userHash": "", "params": json.dumps(params)}
     try:
-        # Use POST instead of GET to avoid URL length issues and satisfy API requirements
         resp = requests.post(url, data=form_data, timeout=20)
-        # The response should be JSON; if it's XML, .json() will raise
         data = resp.json()
         if data.get("status") == "success" and data.get("matches", 0) > 0:
             set_info = data["sets"][0]
-            # Extract nested collection ownership counts
             collections = set_info.get("collections", {}) or {}
             return {
                 "Set Name (BrickSet)": set_info.get("name", "N/A"),
@@ -224,7 +149,6 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
                 "Users Wanted": collections.get("wantedBy", "N/A"),
             }
     except Exception:
-        # Swallow errors and return N/A values if any exception occurs
         pass
     return {
         "Set Name (BrickSet)": "N/A",
@@ -242,18 +166,7 @@ def fetch_brickset_details(set_number: str, api_key: str) -> dict:
 # BrickEconomy API
 ###############################################################################
 
-def fetch_brickeconomy_details(
-    set_number: str, api_key: str, currency: str = "USD"
-) -> dict:
-    """Fetch pricing and value information from the BrickEconomy API.
-
-    The BrickEconomy API uses a simple REST endpoint: ``/api/v1/set/<set number>``.
-    It requires an `x-apikey` header for authentication and a `User-Agent` header.
-    Optionally, a `currency` query parameter can be provided to retrieve values
-    in a specific currency. The endpoint returns a JSON object under the
-    ``data`` key containing information such as retail prices, current values,
-    forecast values and growth metrics.
-    """
+def fetch_brickeconomy_details(set_number: str, api_key: str, currency: str = "USD") -> dict:
     set_number = set_number.strip()
     if "-" not in set_number:
         set_number = f"{set_number}-1"
@@ -336,7 +249,6 @@ def fetch_brickeconomy_details(
     }
 
 
-
 ###############################################################################
 # Streamlit application layout
 ###############################################################################
@@ -347,19 +259,15 @@ st.set_page_config(page_title="LEGO Set Dashboard", layout="wide")
 st.sidebar.header("API Credentials")
 
 st.sidebar.subheader("BrickLink")
-# For security, all BrickLink credentials are entered manually in the sidebar.
 consumer_key = st.sidebar.text_input("Consumer Key", type="password")
 consumer_secret = st.sidebar.text_input("Consumer Secret", type="password")
 token = st.sidebar.text_input("Token", type="password")
 token_secret = st.sidebar.text_input("Token Secret", type="password")
 
 st.sidebar.subheader("BrickSet")
-# BrickSet API key is also entered manually. This app does not persist the key.
 brickset_key = st.sidebar.text_input("BrickSet API", type="password")
 
 st.sidebar.subheader("BrickEconomy")
-# BrickEconomy API key is provided manually for security. Users should
-# paste their BrickEconomy key here. The app does not persist this value.
 brickeconomy_key = st.sidebar.text_input("BrickEconomy API", type="password")
 
 with st.sidebar.expander("Show Current IP Address"):
@@ -370,26 +278,21 @@ with st.sidebar.expander("Show Current IP Address"):
     except Exception:
         st.error("Unable to fetch IP address.")
 
-# Custom CSS to align content and maximize width
+# Custom CSS
 st.markdown(
     """
     <style>
-        .block-container {
-            padding-top: 2rem;
-            padding-left: 2rem;
-            padding-right: 2rem;
-            max-width: 100%;
-        }
+        .block-container { padding-top: 2rem; padding-left: 2rem; padding-right: 2rem; max-width: 100%; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Title
 st.title("LEGO Set Price & Metadata Dashboard")
 
-# Tabs for BrickLink, BrickSet, BrickEconomy, Scoring
-tab_bricklink, tab_brickset, tab_brickeconomy, tab_scoring = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
+tab_bricklink, tab_brickset, tab_brickeconomy, tab_scoring = st.tabs(
+    ["BrickLink", "BrickSet", "BrickEconomy", "Scoring"]
+)
 
 # -----------------------------------------------------------------------------
 # BrickLink Tab
@@ -402,31 +305,33 @@ with tab_bricklink:
         placeholder="e.g., 10276, 75192, 21309",
         key="bricklink_set_input",
     )
-    # Button to trigger BrickLink data fetch
     if st.button("Fetch BrickLink Data"):
         st.markdown("*Please note, data excludes incomplete sets.*")
         if all([consumer_key, consumer_secret, token, token_secret, set_input]):
             auth = OAuth1(consumer_key, consumer_secret, token, token_secret)
             set_raw_list = [s.strip() for s in set_input.split(",") if s.strip()]
             results = []
+            errors = []
             with st.spinner("Fetching BrickLink data..."):
                 for s in set_raw_list:
-                    data = fetch_set_data(s, auth)
-                    if data:
-                        results.append(data)
+                    row = fetch_set_data(s, auth)
+                    if row:
+                        if "_errors" in row:
+                            for e in row["_errors"]:
+                                errors.append(f"{normalize_set_number(s)}: {e}")
+                            row.pop("_errors", None)
+                        results.append(row)
+            if errors:
+                st.warning("Some BrickLink requests failed:\n\n" + "\n".join(f"- {e}" for e in errors))
             if results:
                 df = pd.DataFrame(results)
                 st.success("BrickLink data loaded successfully")
-                # Convert the 'Set Name' HTML link to plain text and drop the image column
+                # For display: strip anchor text, drop image column
                 df_display = df.copy()
-                # Extract the inner text from the anchor tag for display
                 df_display["Set Name"] = df_display["Set Name"].str.extract(r'">(.*?)</a>')
-                # Drop the Set Image column so the table formatting matches other tabs
                 if "Set Image" in df_display.columns:
-                    df_display = df_display.drop(columns=["Set Image"])  # remove image
-                # Show the data using Streamlit's built-in dataframe component
+                    df_display = df_display.drop(columns=["Set Image"])
                 st.dataframe(df_display)
-                # Prepare CSV for download using the same cleaned DataFrame
                 csv = df_display.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Download BrickLink Data as CSV",
@@ -437,22 +342,18 @@ with tab_bricklink:
             else:
                 st.warning("No valid BrickLink results found.")
         else:
-            st.warning(
-                "Please enter your BrickLink credentials and at least one set number."
-            )
+            st.warning("Please enter your BrickLink credentials and at least one set number.")
 
 # -----------------------------------------------------------------------------
 # BrickSet Tab
 # -----------------------------------------------------------------------------
 with tab_brickset:
     st.header("BrickSet Data")
-    
     bs_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickSet:",
         placeholder="e.g., 10276, 75192, 21309",
         key="brickset_set_input",
     )
-    # Button to trigger BrickSet data fetch
     if st.button("Fetch BrickSet Data"):
         if brickset_key and bs_set_input:
             set_raw_list = [s.strip() for s in bs_set_input.split(",") if s.strip()]
@@ -461,14 +362,12 @@ with tab_brickset:
                 for s in set_raw_list:
                     s_norm = normalize_set_number(s)
                     data = fetch_brickset_details(s_norm, brickset_key)
-                    # Include the normalized set number for reference
                     data.update({"Set Number": s_norm})
                     results.append(data)
             if results:
                 df = pd.DataFrame(results)
                 st.success("BrickSet data loaded successfully")
                 st.dataframe(df)
-                # Offer CSV download
                 csv = df.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Download BrickSet Data as CSV",
@@ -479,37 +378,29 @@ with tab_brickset:
             else:
                 st.warning("No valid BrickSet results found.")
         else:
-            st.warning(
-                "Please enter your BrickSet API key (in the sidebar) and at least "
-                "one set number."
-            )
+            st.warning("Please enter your BrickSet API key (in the sidebar) and at least one set number.")
 
 # -----------------------------------------------------------------------------
 # BrickEconomy Tab
 # -----------------------------------------------------------------------------
 with tab_brickeconomy:
     st.header("BrickEconomy Data")
-    
-    # Input for set numbers
     be_set_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for BrickEconomy:",
         placeholder="e.g., 10276, 75192, 21309",
         key="brickeconomy_set_input",
     )
-    # Allow user to select currency; default to USD
     currency = st.selectbox(
         "Select currency for valuations:",
         options=["USD", "GBP", "CAD", "AUD", "CNY", "KRW", "EUR", "JPY"],
         index=0,
     )
     if st.button("Fetch BrickEconomy Data"):
-        # Require both the API key (entered in the sidebar) and set numbers
         if brickeconomy_key and be_set_input:
             set_raw_list = [s.strip() for s in be_set_input.split(",") if s.strip()]
             results = []
             with st.spinner("Fetching BrickEconomy data..."):
                 for s in set_raw_list:
-                    # Fetch data for each set and append normalized set number
                     data = fetch_brickeconomy_details(s, brickeconomy_key, currency)
                     data.update({"Set Number": normalize_set_number(s)})
                     results.append(data)
@@ -517,7 +408,6 @@ with tab_brickeconomy:
                 df = pd.DataFrame(results)
                 st.success("BrickEconomy data loaded successfully")
                 st.dataframe(df)
-                # Prepare CSV download
                 csv = df.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="Download BrickEconomy Data as CSV",
@@ -528,23 +418,18 @@ with tab_brickeconomy:
             else:
                 st.warning("No valid BrickEconomy results found.")
         else:
-            st.warning(
-                "Please enter your BrickEconomy API key (in the sidebar) and at "
-                "least one set number."
-            )
+            st.warning("Please enter your BrickEconomy API key (in the sidebar) and at least one set number.")
 
 # -----------------------------------------------------------------------------
 # Scoring Tab
 # -----------------------------------------------------------------------------
 with tab_scoring:
     st.header("LEGO Set Scoring Metrics")
-
     scoring_input = st.text_input(
         "Enter LEGO Set Numbers (comma-separated) for Scoring:",
         placeholder="e.g., 10276, 75192, 21309",
         key="scoring_set_input",
     )
-
     if st.button("Calculate Scores"):
         if brickset_key and scoring_input:
             set_raw_list = [s.strip() for s in scoring_input.split(",") if s.strip()]
@@ -553,11 +438,9 @@ with tab_scoring:
                 for s in set_raw_list:
                     s_norm = normalize_set_number(s)
                     bset_data = fetch_brickset_details(s_norm, brickset_key)
-
                     try:
                         owned_raw = bset_data.get("Users Owned")
                         wanted_raw = bset_data.get("Users Wanted")
-
                         try:
                             owned = float(owned_raw)
                             wanted = float(wanted_raw)
@@ -567,7 +450,6 @@ with tab_scoring:
                             owned = wanted = demand_ratio = demand_percent = "N/A"
                     except Exception:
                         owned = wanted = demand_ratio = demand_percent = "N/A"
-
                     results.append({
                         "Set Number": s_norm,
                         "Brickset Owned": owned,
@@ -575,7 +457,6 @@ with tab_scoring:
                         "Demand Ratio": round(demand_ratio, 3) if isinstance(demand_ratio, (float, int)) else "N/A",
                         "Demand %": round(demand_percent, 2) if isinstance(demand_percent, (float, int)) else "N/A",
                     })
-
             if results:
                 df = pd.DataFrame(results)
                 st.success("Scoring complete")
@@ -594,6 +475,4 @@ with tab_scoring:
 
 # Footer
 st.markdown("---")
-st.caption(
-    "Powered by BrickLink API and BrickSet API • Created by ReUseBricks"
-)
+st.caption("Powered by BrickLink API and BrickSet API • Created by ReUseBricks")
