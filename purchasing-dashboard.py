@@ -415,7 +415,7 @@ with tab_brickset:
             else:
                 st.warning("No valid BrickSet results found.")
         else:
-            st.warning("Please enter your BrickSet API key (in the sidebar) and at least one set number.")
+            st.warning("Please enter your BrickSet credentials and at least one set number..")
 
 # -----------------------------------------------------------------------------
 # BrickEconomy Tab
@@ -455,7 +455,7 @@ with tab_brickeconomy:
             else:
                 st.warning("No valid BrickEconomy results found.")
         else:
-            st.warning("Please enter your BrickEconomy API key (in the sidebar) and at least one set number.")
+            st.warning("Please enter your BrickEconomy credentials and at least one set number.")
 
 # -----------------------------------------------------------------------------
 # Scoring Tab
