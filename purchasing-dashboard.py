@@ -512,4 +512,4 @@ with tab_scoring:
 
 # Footer
 st.markdown("---")
-st.caption("Powered by BrickLink API and BrickSet API • Created by ReUseBricks")
+st.caption("Powered by BrickLink, BrickSet, and BrickEconomy • Created by ReUseBricks")
