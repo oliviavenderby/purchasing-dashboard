@@ -119,7 +119,8 @@ def normalize_set_number(s: str) -> str:
 def parse_set_input(raw: str) -> List[str]:
     if not raw:
         return []
-    parts = [p.strip() for p in raw.replace("\n", ",").split(",")]
+    parts = [p.strip() for p in raw.replace("
+", ",").split(",")]
     parts = [p for p in parts if p]
     return parts
 
@@ -284,30 +285,30 @@ def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> 
 # UI Components
 # ---------------------
 with st.sidebar:
-    st.title("ReUseBricks")
-    st.subheader("Credentials")
-    with st.expander("BrickLink OAuth1", expanded=False):
-        bl_consumer_key = st.text_input("Consumer Key", type="password")
-        bl_consumer_secret = st.text_input("Consumer Secret", type="password")
-        bl_token = st.text_input("Token", type="password")
-        bl_token_secret = st.text_input("Token Secret", type="password")
-    with st.expander("BrickSet", expanded=False):
-        brickset_key = st.text_input("API Key", type="password")
-    with st.expander("BrickEconomy", expanded=False):
-        be_key = st.text_input("API Key", type="password")
-        be_currency = st.text_input("Currency (e.g., USD, EUR)", value="USD")
-
-    st.markdown("---")
+    # Show log first so it's visible even if later widgets error
     with st.expander("Search Log (today)", expanded=True):
         rows = get_todays_log()
         if rows:
             for ts_utc, source, sn, ph, cache_hit, summary in rows[:200]:
                 st.markdown(f"- `{ts_utc}` • **{source}** • *{sn}* • {'cache' if cache_hit else 'live'} • {summary or ''}")
-            if st.button("Clear today's log"):
+            if st.button("Clear today's log", key="btn_clear_log"):
                 clear_todays_log()
                 st.success("Cleared today's log.")
         else:
             st.caption("No queries yet today.")
+
+    st.title("ReUseBricks")
+    st.subheader("Credentials")
+    with st.expander("BrickLink OAuth1", expanded=False):
+        bl_consumer_key = st.text_input("Consumer Key", type="password", key="bl_consumer_key")
+        bl_consumer_secret = st.text_input("Consumer Secret", type="password", key="bl_consumer_secret")
+        bl_token = st.text_input("Token", type="password", key="bl_token")
+        bl_token_secret = st.text_input("Token Secret", type="password", key="bl_token_secret")
+    with st.expander("BrickSet", expanded=False):
+        brickset_key = st.text_input("BrickSet API Key", type="password", key="brickset_api_key")
+    with st.expander("BrickEconomy", expanded=False):
+        be_key = st.text_input("BrickEconomy API Key", type="password", key="brickeconomy_api_key")
+        be_currency = st.text_input("Currency (e.g., USD, EUR)", value="USD", key="brickeconomy_currency")
 
 st.title("LEGO Purchasing Assistant")
 raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
@@ -327,19 +328,24 @@ Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Combined View"])
 # ---------------------
 with Tabs[0]:
     st.subheader("BrickLink")
-    bl_ready = all([bl_consumer_key, bl_consumer_secret, bl_token, bl_token_secret])
+    bl_ready = all([
+        'bl_consumer_key' in st.session_state and st.session_state.bl_consumer_key,
+        'bl_consumer_secret' in st.session_state and st.session_state.bl_consumer_secret,
+        'bl_token' in st.session_state and st.session_state.bl_token,
+        'bl_token_secret' in st.session_state and st.session_state.bl_token_secret,
+    ])
     if not bl_ready:
         st.info("Enter BrickLink OAuth1 credentials in the sidebar.")
     else:
         oauth = OAuth1(
-            client_key=bl_consumer_key,
-            client_secret=bl_consumer_secret,
-            resource_owner_key=bl_token,
-            resource_owner_secret=bl_token_secret,
+            client_key=st.session_state.bl_consumer_key,
+            client_secret=st.session_state.bl_consumer_secret,
+            resource_owner_key=st.session_state.bl_token,
+            resource_owner_secret=st.session_state.bl_token_secret,
         )
         guide_type = st.selectbox("Guide Type", ["stock", "sold"], index=0)
         condition = st.selectbox("Condition", ["N", "U"], index=0, help="N = New, U = Used")
-        if st.button("Fetch BrickLink Data"):
+        if st.button("Fetch BrickLink Data", key="btn_bl"):
             if not set_list:
                 st.warning("Please enter at least one set number.")
             rows_out = []
@@ -368,16 +374,17 @@ with Tabs[0]:
 # ---------------------
 with Tabs[1]:
     st.subheader("BrickSet")
-    if not brickset_key:
+    brickset_key_val = st.session_state.get("brickset_api_key", "")
+    if not brickset_key_val:
         st.info("Enter BrickSet API key in the sidebar.")
     else:
-        if st.button("Fetch BrickSet Data"):
+        if st.button("Fetch BrickSet Data", key="btn_bs"):
             if not set_list:
                 st.warning("Please enter at least one set number.")
             rows_out = []
             for s in set_list:
                 log_query(source="UI:BrickSet:bulk", set_number=s, params={"action": "bulk_fetch"}, cache_hit=True, summary="requested")
-                bs = brickset_fetch(s, brickset_key)
+                bs = brickset_fetch(s, brickset_key_val)
                 row = {"Set": s}
                 row.update(bs)
                 rows_out.append(row)
@@ -390,17 +397,18 @@ with Tabs[1]:
 # ---------------------
 with Tabs[2]:
     st.subheader("BrickEconomy")
-    if not be_key:
+    be_key_val = st.session_state.get("brickeconomy_api_key", "")
+    be_currency_val = st.session_state.get("brickeconomy_currency", "USD") or "USD"
+    if not be_key_val:
         st.info("Enter BrickEconomy API key in the sidebar.")
     else:
-        currency = be_currency.strip() or "USD"
-        if st.button("Fetch BrickEconomy Data"):
+        if st.button("Fetch BrickEconomy Data", key="btn_be"):
             if not set_list:
                 st.warning("Please enter at least one set number.")
             rows_out = []
             for s in set_list:
                 log_query(source="UI:BrickEconomy:bulk", set_number=s, params={"action": "bulk_fetch"}, cache_hit=True, summary="requested")
-                be = brickeconomy_fetch(s, be_key, currency=currency)
+                be = brickeconomy_fetch(s, be_key_val, currency=be_currency_val)
                 row = {"Set": s}
                 row.update(be)
                 rows_out.append(row)
@@ -414,19 +422,24 @@ with Tabs[2]:
 with Tabs[3]:
     st.subheader("Combined View (quick demo)")
     st.caption("Fetches each source and merges on Set. Extend/modify as needed for your scoring pipeline.")
-    run = st.button("Fetch All Sources")
+    run = st.button("Fetch All Sources", key="btn_all")
     if run:
         if not set_list:
             st.warning("Please enter at least one set number.")
         rows = []
         # Prepare OAuth if ready
         oauth = None
-        if all([bl_consumer_key, bl_consumer_secret, bl_token, bl_token_secret]):
+        if all([
+            'bl_consumer_key' in st.session_state and st.session_state.bl_consumer_key,
+            'bl_consumer_secret' in st.session_state and st.session_state.bl_consumer_secret,
+            'bl_token' in st.session_state and st.session_state.bl_token,
+            'bl_token_secret' in st.session_state and st.session_state.bl_token_secret,
+        ]):
             oauth = OAuth1(
-                client_key=bl_consumer_key,
-                client_secret=bl_consumer_secret,
-                resource_owner_key=bl_token,
-                resource_owner_secret=bl_token_secret,
+                client_key=st.session_state.bl_consumer_key,
+                client_secret=st.session_state.bl_consumer_secret,
+                resource_owner_key=st.session_state.bl_token,
+                resource_owner_secret=st.session_state.bl_token_secret,
             )
         for s in set_list:
             record: Dict[str, Any] = {"Set": s}
@@ -441,9 +454,9 @@ with Tabs[3]:
                     "BL Currency": price.get("currency_code"),
                 })
             # BrickSet (optional)
-            if brickset_key:
+            if st.session_state.get("brickset_api_key"):
                 log_query(source="UI:BrickSet:bulk", set_number=s, params={"action": "bulk_fetch"}, cache_hit=True, summary="requested")
-                bs = brickset_fetch(s, brickset_key)
+                bs = brickset_fetch(s, st.session_state["brickset_api_key"]) 
                 record.update({
                     "BS Name": bs.get("Set Name (BrickSet)"),
                     "Pieces": bs.get("Pieces"),
@@ -452,9 +465,9 @@ with Tabs[3]:
                     "BS Year": bs.get("Year"),
                 })
             # BrickEconomy (optional)
-            if be_key:
+            if st.session_state.get("brickeconomy_api_key"):
                 log_query(source="UI:BrickEconomy:bulk", set_number=s, params={"action": "bulk_fetch"}, cache_hit=True, summary="requested")
-                be = brickeconomy_fetch(s, be_key, currency=(be_currency or "USD"))
+                be = brickeconomy_fetch(s, st.session_state["brickeconomy_api_key"], currency=st.session_state.get("brickeconomy_currency", "USD"))
                 record.update({
                     "BE Name": be.get("Name"),
                     "BE Current Value": be.get("Current Value"),
