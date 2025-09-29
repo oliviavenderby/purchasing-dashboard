@@ -393,15 +393,14 @@ with Tabs[3]:
                 v = float(value or 0)
             except Exception:
                 p, r, v = 0.0, 0.0, 0.0
-            score = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
-            scores.append({"Set": s, "Pieces": pieces, "Rating": rating, "Current Value": value, "Score": round(score, 2)})
+            score_val = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
+            row_payload = {"Pieces": pieces, "Rating": rating, "Current Value": value, "Score": round(score_val, 2)}
+            scores.append({"Set": s, **row_payload})
+            # Save scoring result as its own unique history type
+            save_result(source="Scoring:row", set_number=s, params={"formula":"0.4p/1000+0.4r+0.2v/100"}, payload=row_payload)
         st.dataframe(pd.DataFrame(scores), use_container_width=True)
-    st.markdown("### History (today – combined)")
-    df_bl = results_today_df("BrickLink:row")
-    df_bs = results_today_df("BrickSet:row")
-    df_be = results_today_df("BrickEconomy:row")
-    df_all = pd.concat([df_bl, df_bs, df_be], ignore_index=True) if not (df_bl.empty and df_bs.empty and df_be.empty) else pd.DataFrame()
-    st.dataframe(df_all if not df_all.empty else pd.DataFrame(columns=["Time (UTC)","Set","Name","Set Name (BrickSet)","Pieces","Minifigs","Theme","Year","Rating","Users Owned","Users Wanted","Retail Price","Current Value","Growth %","Currency","Image","URL"]), use_container_width=True)
+    st.markdown("### History (today – Scoring)")
+    hist_sc = results_today_df("Scoring:row")
+    st.dataframe(hist_sc if not hist_sc.empty else pd.DataFrame(columns=["Time (UTC)","Set","Pieces","Rating","Current Value","Score"]), use_container_width=True)
 
 st.markdown("<small>Cache TTL: 24h. History shows today's queries and whether they were served from cache.</small>", unsafe_allow_html=True)
-
