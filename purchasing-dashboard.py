@@ -1,5 +1,5 @@
 # purchasing_dashboard.py
-# Streamlit app: LEGO purchasing assistant with 24h API caching and a persistent query log
+# LEGO Purchasing Assistant with 24h caching + per‑source History tables + Scoring tab
 
 import os
 import json
@@ -15,15 +15,17 @@ from requests_oauthlib import OAuth1
 
 st.set_page_config(page_title="LEGO Purchasing Assistant", layout="wide")
 
-# ---------------------
-# Query Log Helpers
-# ---------------------
-DB_PATH = "search_log.db"
+# =====================
+# Query Log (SQLite)
+# =====================
+DB_PATH = os.environ.get("QUERY_LOG_DB_PATH", "search_log.db")
+
 
 def _init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS query_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_utc TEXT NOT NULL,
@@ -33,13 +35,16 @@ def _init_db():
             cache_hit INTEGER NOT NULL,
             summary TEXT
         )
-    """)
+        """
+    )
     conn.commit()
     conn.close()
 
+
 def _hash_params(d: dict) -> str:
     blob = json.dumps(d or {}, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
 
 def log_query(*, source: str, set_number: str, params: dict, cache_hit: bool, summary: str = ""):
     _init_db()
@@ -47,27 +52,41 @@ def log_query(*, source: str, set_number: str, params: dict, cache_hit: bool, su
     c = conn.cursor()
     c.execute(
         "INSERT INTO query_log (ts_utc, source, set_number, params_hash, cache_hit, summary) VALUES (?,?,?,?,?,?)",
-        (datetime.now(timezone.utc).isoformat(timespec="seconds"), source, set_number, _hash_params(params), int(cache_hit), summary[:300])
+        (
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            source,
+            set_number,
+            _hash_params(params),
+            int(bool(cache_hit)),
+            (summary or "")[:300],
+        ),
     )
     conn.commit()
     conn.close()
 
-def get_todays_log():
+
+def history_today(source_prefix: str) -> pd.DataFrame:
+    """Return today's log rows filtered by source prefix (e.g., 'BrickSet:' or 'BrickLink:')."""
     _init_db()
     today = date.today().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        SELECT ts_utc, source, set_number, params_hash, cache_hit, summary
+    c.execute(
+        """
+        SELECT ts_utc, source, set_number, cache_hit, summary
         FROM query_log
-        WHERE substr(ts_utc,1,10)=?
+        WHERE substr(ts_utc,1,10)=? AND source LIKE ?
         ORDER BY ts_utc DESC
-    """, (today,))
+        """,
+        (today, f"{source_prefix}%"),
+    )
     rows = c.fetchall()
     conn.close()
-    return rows
+    df = pd.DataFrame(rows, columns=["Time (UTC)", "Source", "Set", "Cache?", "Summary"]).astype({"Cache?": bool})
+    return df
 
-def clear_todays_log():
+
+def clear_history_today():
     _init_db()
     today = date.today().isoformat()
     conn = sqlite3.connect(DB_PATH)
@@ -76,130 +95,288 @@ def clear_todays_log():
     conn.commit()
     conn.close()
 
-# ---------------------
+
+# =====================
 # Helpers
-# ---------------------
+# =====================
+
 def normalize_set_number(s: str) -> str:
     if not s:
         return ""
     s = s.strip()
     return s if "-" in s else f"{s}-1"
 
+
 def parse_set_input(raw: str) -> List[str]:
     if not raw:
         return []
-    # Fix: properly close the string literals
-    parts = [p.strip() for p in raw.replace("\n", ",").split(",")]
+    parts = [p.strip() for p in raw.replace("
+", ",").split(",")]
     return [p for p in parts if p]
 
-# ---------------------
+
+# =====================
 # Cached HTTP
-# ---------------------
+# =====================
 @st.cache_data(ttl=86400, hash_funcs={OAuth1: lambda _: "oauth1"})
-def _cached_get_json(url: str, params: Optional[dict], oauth: OAuth1, timeout: int=20):
+def _cached_get_json(url: str, params: Optional[dict], oauth: OAuth1, timeout: int = 20) -> Dict[str, Any]:
     r = requests.get(url, params=params, auth=oauth, timeout=timeout)
     r.raise_for_status()
-    return r.json()
+    try:
+        return r.json()
+    except Exception:
+        return {"_raw": r.text}
+
 
 @st.cache_data(ttl=86400)
-def _cached_post_json(url: str, payload: dict):
+def _cached_post_json(url: str, payload: dict) -> Dict[str, Any]:
     r = requests.post(url, data=payload, timeout=20)
-    return r.json()
+    try:
+        return r.json()
+    except Exception:
+        return {"status": "error", "http": r.status_code, "body": r.text[:400]}
+
 
 @st.cache_data(ttl=86400)
 def _cached_get_json_noauth(url: str, headers: dict, params: dict):
     r = requests.get(url, headers=headers, params=params, timeout=20)
-    return r.status_code, r.json()
+    try:
+        return r.status_code, r.json()
+    except Exception:
+        return r.status_code, None
 
-# ---------------------
-# API Wrappers
-# ---------------------
-def bl_fetch_set_metadata(set_number: str, oauth: OAuth1):
+
+# =====================
+# API Wrappers + Logging
+# =====================
+
+def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
-    data = _cached_get_json(url, None, oauth).get("data", {})
-    log_query(source="BrickLink:metadata", set_number=set_number, params={"url": url}, cache_hit=True, summary=data.get("name",""))
+    raw = _cached_get_json(url, None, oauth)
+    data = raw.get("data", {}) or {}
+    log_query(source="BrickLink:metadata", set_number=set_number, params={"url": url}, cache_hit=True, summary=data.get("name") or "")
     return {"Set Name": data.get("name"), "Category ID": data.get("category_id")}
 
-def bl_fetch_price(set_number: str, oauth: OAuth1, guide_type: str, cond: str):
+
+def bl_fetch_image_url(set_number: str, oauth: OAuth1) -> str:
+    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/images/0"
+    raw = _cached_get_json(url, None, oauth)
+    img = (raw.get("data") or {}).get("thumbnail_url") or ""
+    log_query(source="BrickLink:image", set_number=set_number, params={"url": url}, cache_hit=True, summary="thumb")
+    return img
+
+
+def bl_fetch_price(set_number: str, oauth: OAuth1, guide_type: str = "stock", new_or_used: str = "N") -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
-    params = {"guide_type": guide_type, "new_or_used": cond}
-    data = _cached_get_json(url, params, oauth).get("data", {})
-    log_query(source=f"BrickLink:price:{guide_type}:{cond}", set_number=set_number, params=params, cache_hit=True, summary=f"avg={data.get('avg_price')}")
+    params = {"guide_type": guide_type, "new_or_used": new_or_used}
+    raw = _cached_get_json(url, params, oauth)
+    data = raw.get("data", {}) or {}
+    log_query(
+        source=f"BrickLink:price:{guide_type}:{new_or_used}",
+        set_number=set_number,
+        params=params,
+        cache_hit=True,
+        summary=f"avg={data.get('avg_price')}"
+    )
     return data
 
-def brickset_fetch(set_number: str, api_key: str):
+
+def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
     payload = {"apiKey": api_key, "userHash": "", "params": json.dumps({"setNumber": set_number, "extendedData": 1})}
     data = _cached_post_json("https://brickset.com/api/v3.asmx/getSets", payload)
     if data.get("status") == "success" and data.get("matches", 0) > 0:
-        s = data["sets"][0]
-        return {"Set Name (BrickSet)": s.get("name"), "Pieces": s.get("pieces"), "Minifigs": s.get("minifigs"), "Theme": s.get("theme"), "Year": s.get("year"), "Rating": s.get("rating"), "Users Owned": s.get("collections",{}).get("ownedBy"), "Users Wanted": s.get("collections",{}).get("wantedBy")}
-    return {"_error": "no match"}
+        s = (data.get("sets") or [{}])[0]
+        collections = s.get("collections", {}) or {}
+        out = {
+            "Set Name (BrickSet)": s.get("name", "N/A"),
+            "Pieces": s.get("pieces", "N/A"),
+            "Minifigs": s.get("minifigs", "N/A"),
+            "Theme": s.get("theme", "N/A"),
+            "Year": s.get("year", "N/A"),
+            "Rating": s.get("rating", "N/A"),
+            "Users Owned": collections.get("ownedBy", "N/A"),
+            "Users Wanted": collections.get("wantedBy", "N/A"),
+        }
+        log_query(source="BrickSet:getSets", set_number=set_number, params={"extendedData": 1}, cache_hit=True, summary=out["Set Name (BrickSet)"])
+        return out
+    log_query(source="BrickSet:getSets", set_number=set_number, params={"extendedData": 1}, cache_hit=True, summary="no match")
+    return {"_error": "No match"}
 
-def brickeconomy_fetch(set_number: str, api_key: str, currency: str="USD"):
+
+def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
     url = f"https://www.brickeconomy.com/api/v1/set/{set_number}"
-    headers = {"accept":"application/json","x-apikey":api_key,"User-Agent":"ReUseBricks-Streamlit-App/1.0"}
-    status, payload = _cached_get_json_noauth(url, headers, {"currency":currency})
-    data = payload.get("data") if status==200 else {}
-    return {"Name": data.get("name"), "Theme": data.get("theme"), "Year": data.get("year"), "Current Value": data.get("current_value",{}).get("value")}
+    headers = {"accept": "application/json", "x-apikey": api_key, "User-Agent": "ReUseBricks-Streamlit-App/1.0"}
+    status, payload = _cached_get_json_noauth(url, headers, {"currency": currency})
+    data = payload.get("data") if (status == 200 and isinstance(payload, dict)) else None
+    if not data:
+        log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency}, cache_hit=True, summary=f"HTTP {status}")
+        return {"_error": f"No data (HTTP {status})"}
+    out = {
+        "Name": data.get("name"),
+        "Theme": data.get("theme"),
+        "Year": data.get("year"),
+        "Retail Price": (data.get("msrp") or {}).get("value"),
+        "Current Value": (data.get("current_value") or {}).get("value"),
+        "Growth %": data.get("growth_percentage"),
+        "URL": data.get("url"),
+    }
+    log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency}, cache_hit=True, summary=out["Name"] or "")
+    return out
 
-# ---------------------
+
+# =====================
 # Sidebar
-# ---------------------
+# =====================
 with st.sidebar:
-    with st.expander("Search Log (today)", expanded=True):
-        rows = get_todays_log()
-        if rows:
-            for ts_utc, source, sn, ph, cache_hit, summary in rows[:100]:
-                st.markdown(f"- `{ts_utc}` • **{source}** • {sn} • {'cache' if cache_hit else 'live'} • {summary}")
-            if st.button("Clear today's log"):
-                clear_todays_log()
-                st.experimental_rerun()
-        else:
-            st.caption("No queries yet today.")
     st.title("ReUseBricks")
-    bl_consumer_key = st.text_input("BrickLink Consumer Key", type="password")
-    bl_consumer_secret = st.text_input("BrickLink Consumer Secret", type="password")
-    bl_token = st.text_input("BrickLink Token", type="password")
-    bl_token_secret = st.text_input("BrickLink Token Secret", type="password")
-    brickset_key = st.text_input("BrickSet API Key", type="password")
-    be_key = st.text_input("BrickEconomy API Key", type="password")
-    be_currency = st.text_input("Currency", value="USD")
+    st.subheader("Credentials")
+    with st.expander("BrickLink OAuth1"):
+        st.text_input("Consumer Key", type="password", key="bl_consumer_key")
+        st.text_input("Consumer Secret", type="password", key="bl_consumer_secret")
+        st.text_input("Token", type="password", key="bl_token")
+        st.text_input("Token Secret", type="password", key="bl_token_secret")
+    with st.expander("BrickSet"):
+        st.text_input("BrickSet API Key", type="password", key="brickset_api_key")
+    with st.expander("BrickEconomy"):
+        st.text_input("BrickEconomy API Key", type="password", key="brickeconomy_api_key")
+        st.text_input("Currency (e.g., USD, EUR)", value="USD", key="brickeconomy_currency")
+    st.markdown("---")
+    if st.button("Clear today's history", key="btn_clear_history"):
+        clear_history_today()
+        st.success("Cleared.")
 
-# ---------------------
+# =====================
 # Main
-# ---------------------
+# =====================
 st.title("LEGO Purchasing Assistant")
-raw_sets = st.text_area("Enter set numbers")
+raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
 set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
 
-Tabs = st.tabs(["BrickLink","BrickSet","BrickEconomy"])
+# Tabs: BrickLink, BrickSet, BrickEconomy, Scoring
+Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 
+# -------- BrickLink Tab --------
 with Tabs[0]:
-    if st.button("Fetch BrickLink") and all([bl_consumer_key, bl_consumer_secret, bl_token, bl_token_secret]):
-        oauth = OAuth1(bl_consumer_key, bl_consumer_secret, bl_token, bl_token_secret)
-        out=[]
-        for s in set_list:
-            meta = bl_fetch_set_metadata(s, oauth)
-            price = bl_fetch_price(s, oauth, "stock", "N")
-            out.append({"Set":s, "Name":meta.get("Set Name"), "Avg Price":price.get("avg_price")})
-        st.dataframe(pd.DataFrame(out))
+    st.subheader("BrickLink Data")
+    creds_ok = all([
+        st.session_state.get("bl_consumer_key"),
+        st.session_state.get("bl_consumer_secret"),
+        st.session_state.get("bl_token"),
+        st.session_state.get("bl_token_secret"),
+    ])
+    if not creds_ok:
+        st.info("Enter BrickLink OAuth1 credentials in the sidebar.")
+    else:
+        oauth = OAuth1(
+            client_key=st.session_state.bl_consumer_key,
+            client_secret=st.session_state.bl_consumer_secret,
+            resource_owner_key=st.session_state.bl_token,
+            resource_owner_secret=st.session_state.bl_token_secret,
+        )
+        guide = st.selectbox("Guide Type", ["stock", "sold"], index=0, key="bl_guide")
+        cond = st.selectbox("Condition", ["N", "U"], index=0, key="bl_cond")
+        if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
+            if not set_list:
+                st.warning("Please enter at least one set number.")
+            else:
+                rows = []
+                for s in set_list:
+                    # log UI intent (optional info row)
+                    log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
+                    meta = bl_fetch_set_metadata(s, oauth)
+                    price = bl_fetch_price(s, oauth, guide, cond)
+                    img = bl_fetch_image_url(s, oauth)
+                    rows.append({
+                        "Set": s,
+                        "Name": meta.get("Set Name"),
+                        "Avg Price": price.get("avg_price"),
+                        "Qty Avg Price": price.get("qty_avg_price"),
+                        "Min": price.get("min_price"),
+                        "Max": price.get("max_price"),
+                        "Currency": price.get("currency_code"),
+                        "Image": img,
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.markdown("### History (today)")
+        st.dataframe(history_today("BrickLink"), use_container_width=True)
 
+# -------- BrickSet Tab --------
 with Tabs[1]:
-    if st.button("Fetch BrickSet") and brickset_key:
-        out=[]
-        for s in set_list:
-            bs = brickset_fetch(s, brickset_key)
-            row={"Set":s}
-            row.update(bs)
-            out.append(row)
-        st.dataframe(pd.DataFrame(out))
+    st.subheader("BrickSet Data")
+    api = st.session_state.get("brickset_api_key", "")
+    if not api:
+        st.info("Enter BrickSet API key in the sidebar.")
+    else:
+        if st.button("Fetch BrickSet Data", key="btn_fetch_bs"):
+            if not set_list:
+                st.warning("Please enter at least one set number.")
+            else:
+                rows = []
+                for s in set_list:
+                    log_query(source="UI:BrickSet:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
+                    data = brickset_fetch(s, api)
+                    row = {"Set": s}
+                    row.update(data)
+                    rows.append(row)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.markdown("### History (today)")
+        st.dataframe(history_today("BrickSet"), use_container_width=True)
 
+# -------- BrickEconomy Tab --------
 with Tabs[2]:
-    if st.button("Fetch BrickEconomy") and be_key:
-        out=[]
+    st.subheader("BrickEconomy Data")
+    api = st.session_state.get("brickeconomy_api_key", "")
+    currency = st.session_state.get("brickeconomy_currency", "USD") or "USD"
+    if not api:
+        st.info("Enter BrickEconomy API key in the sidebar.")
+    else:
+        if st.button("Fetch BrickEconomy Data", key="btn_fetch_be"):
+            if not set_list:
+                st.warning("Please enter at least one set number.")
+            else:
+                rows = []
+                for s in set_list:
+                    log_query(source="UI:BrickEconomy:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
+                    data = brickeconomy_fetch(s, api, currency)
+                    row = {"Set": s}
+                    row.update(data)
+                    rows.append(row)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.markdown("### History (today)")
+        st.dataframe(history_today("BrickEconomy"), use_container_width=True)
+
+# -------- Scoring Tab --------
+with Tabs[3]:
+    st.subheader("Scoring")
+    st.caption("Simple demo scoring. Customize as needed.")
+    # Example: build a quick sheet from BrickSet + BrickEconomy lookups
+    # (In a real pipeline you would persist structured results.)
+    # Here we just show a template scoring calculation if results are fetched this run.
+    # Users can fetch in prior tabs; cache ensures repeat calls avoid live API hits.
+    if st.button("Compute Score (example)", key="btn_score"):
+        scores = []
+        api_bs = st.session_state.get("brickset_api_key", "")
+        api_be = st.session_state.get("brickeconomy_api_key", "")
+        cur = st.session_state.get("brickeconomy_currency", "USD") or "USD"
         for s in set_list:
-            be = brickeconomy_fetch(s, be_key, be_currency)
-            row={"Set":s}
-            row.update(be)
-            out.append(row)
-        st.dataframe(pd.DataFrame(out))
+            # pull via cached wrappers if keys exist
+            bs = brickset_fetch(s, api_bs) if api_bs else {}
+            be = brickeconomy_fetch(s, api_be, cur) if api_be else {}
+            pieces = (bs or {}).get("Pieces") or 0
+            rating = (bs or {}).get("Rating") or 0
+            value = (be or {}).get("Current Value") or 0
+            # naive score: normalize roughly
+            try:
+                p = float(pieces or 0)
+                r = float(rating or 0)
+                v = float(value or 0)
+            except Exception:
+                p, r, v = 0.0, 0.0, 0.0
+            score = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
+            scores.append({"Set": s, "Pieces": pieces, "Rating": rating, "Current Value": value, "Score": round(score, 2)})
+        st.dataframe(pd.DataFrame(scores), use_container_width=True)
+    st.markdown("### History (today)")
+    st.dataframe(history_today("UI:"), use_container_width=True)
+
+# Footer
+st.markdown("<small>Cache TTL: 24h. History shows today's queries and whether they were served from cache.</small>", unsafe_allow_html=True)
