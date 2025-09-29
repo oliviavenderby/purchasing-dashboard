@@ -16,7 +16,7 @@ from requests_oauthlib import OAuth1
 st.set_page_config(page_title="LEGO Purchasing Assistant", layout="wide")
 
 # =====================
-# Query Log (SQLite)
+# Query Log + Result Store (SQLite)
 # =====================
 DB_PATH = os.environ.get("QUERY_LOG_DB_PATH", "search_log.db")
 
@@ -24,6 +24,7 @@ DB_PATH = os.environ.get("QUERY_LOG_DB_PATH", "search_log.db")
 def _init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Log of queries
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS query_log (
@@ -34,6 +35,19 @@ def _init_db():
             params_hash TEXT NOT NULL,
             cache_hit INTEGER NOT NULL,
             summary TEXT
+        )
+        """
+    )
+    # Persistent results so History can show full data without re-calling APIs
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS query_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc TEXT NOT NULL,
+            source TEXT NOT NULL,
+            set_number TEXT NOT NULL,
+            params_hash TEXT NOT NULL,
+            payload TEXT NOT NULL
         )
         """
     )
@@ -65,23 +79,51 @@ def log_query(*, source: str, set_number: str, params: dict, cache_hit: bool, su
     conn.close()
 
 
-def history_today(source_prefix: str) -> pd.DataFrame:
+def save_result(*, source: str, set_number: str, params: dict, payload: dict):
+    """Persist the exact table row we showed to the user so History can render it without any API calls."""
+    _init_db()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO query_results (ts_utc, source, set_number, params_hash, payload) VALUES (?,?,?,?,?)",
+        (
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            source,
+            set_number,
+            _hash_params(params),
+            json.dumps(payload, separators=(",", ":")),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def results_today_df(source_exact: str) -> pd.DataFrame:
+    """Return today's saved table rows for a given source (exact match), newest first."""
     _init_db()
     today = date.today().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         """
-        SELECT ts_utc, source, set_number, cache_hit, summary
-        FROM query_log
-        WHERE substr(ts_utc,1,10)=? AND source LIKE ?
+        SELECT ts_utc, set_number, payload
+        FROM query_results
+        WHERE substr(ts_utc,1,10)=? AND source = ?
         ORDER BY ts_utc DESC
         """,
-        (today, f"{source_prefix}%"),
+        (today, source_exact),
     )
     rows = c.fetchall()
     conn.close()
-    df = pd.DataFrame(rows, columns=["Time (UTC)", "Source", "Set", "Cache?", "Summary"]).astype({"Cache?": bool})
+    parsed = []
+    for ts_utc, set_number, payload in rows:
+        try:
+            row = json.loads(payload)
+            row = {**{"Time (UTC)": ts_utc, "Set": set_number}, **row}
+            parsed.append(row)
+        except Exception:
+            continue
+    df = pd.DataFrame(parsed)
     return df
 
 
@@ -91,6 +133,7 @@ def clear_history_today():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM query_log WHERE substr(ts_utc,1,10)=?", (today,))
+    c.execute("DELETE FROM query_results WHERE substr(ts_utc,1,10)=?", (today,))
     conn.commit()
     conn.close()
 
@@ -252,7 +295,18 @@ with Tabs[0]:
                 log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 meta = bl_fetch_set_metadata(s, oauth)
                 price = bl_fetch_price(s, oauth, "stock", "N")
-                rows.append({"Set": s, "Name": meta.get("Set Name"), "Avg Price": price.get("avg_price")})
+                img = bl_fetch_image_url(s, oauth)
+                row_payload = {
+                    "Name": meta.get("Set Name"),
+                    "Avg Price": price.get("avg_price"),
+                    "Qty Avg Price": price.get("qty_avg_price"),
+                    "Min": price.get("min_price"),
+                    "Max": price.get("max_price"),
+                    "Currency": price.get("currency_code"),
+                    "Image": img,
+                }
+                rows.append({"Set": s, **row_payload})
+                save_result(source="BrickLink:row", set_number=s, params={"guide": "stock", "cond": "N"}, payload=row_payload)
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
