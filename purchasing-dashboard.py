@@ -310,7 +310,8 @@ with Tabs[0]:
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
-        st.dataframe(history_today("BrickLink"), use_container_width=True)
+        hist_bl = results_today_df("BrickLink:row")
+        st.dataframe(hist_bl if not hist_bl.empty else pd.DataFrame(columns=["Time (UTC)","Set","Name","Avg Price","Qty Avg Price","Min","Max","Currency","Image"]), use_container_width=True)
 
 # BrickSet Tab
 with Tabs[1]:
@@ -324,13 +325,23 @@ with Tabs[1]:
             for s in set_list:
                 log_query(source="UI:BrickSet:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 data = brickset_fetch(s, api)
-                row = {"Set": s}
-                row.update(data)
-                rows.append(row)
+                row_payload = {
+                    "Set Name (BrickSet)": data.get("Set Name (BrickSet)"),
+                    "Pieces": data.get("Pieces"),
+                    "Minifigs": data.get("Minifigs"),
+                    "Theme": data.get("Theme"),
+                    "Year": data.get("Year"),
+                    "Rating": data.get("Rating"),
+                    "Users Owned": data.get("Users Owned"),
+                    "Users Wanted": data.get("Users Wanted"),
+                }
+                rows.append({"Set": s, **row_payload})
+                save_result(source="BrickSet:row", set_number=s, params={}, payload=row_payload)
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
-        st.dataframe(history_today("BrickSet"), use_container_width=True)
+        hist_bs = results_today_df("BrickSet:row")
+        st.dataframe(hist_bs if not hist_bs.empty else pd.DataFrame(columns=["Time (UTC)","Set","Set Name (BrickSet)","Pieces","Minifigs","Theme","Year","Rating","Users Owned","Users Wanted"]), use_container_width=True)
 
 # BrickEconomy Tab
 with Tabs[2]:
@@ -345,13 +356,22 @@ with Tabs[2]:
             for s in set_list:
                 log_query(source="UI:BrickEconomy:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 data = brickeconomy_fetch(s, api, currency)
-                row = {"Set": s}
-                row.update(data)
-                rows.append(row)
+                row_payload = {
+                    "Name": data.get("Name"),
+                    "Theme": data.get("Theme"),
+                    "Year": data.get("Year"),
+                    "Retail Price": data.get("Retail Price"),
+                    "Current Value": data.get("Current Value"),
+                    "Growth %": data.get("Growth %"),
+                    "URL": data.get("URL"),
+                }
+                rows.append({"Set": s, **row_payload})
+                save_result(source="BrickEconomy:row", set_number=s, params={"currency": currency}, payload=row_payload)
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
-        st.dataframe(history_today("BrickEconomy"), use_container_width=True)
+        hist_be = results_today_df("BrickEconomy:row")
+        st.dataframe(hist_be if not hist_be.empty else pd.DataFrame(columns=["Time (UTC)","Set","Name","Theme","Year","Retail Price","Current Value","Growth %","URL"]), use_container_width=True)
 
 # Scoring Tab
 with Tabs[3]:
