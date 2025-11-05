@@ -613,7 +613,7 @@ with Tabs[3]:
     hist_sc = results_today_df("Scoring:row")
     st.dataframe(
         hist_sc if not hist_sc.empty else pd.DataFrame(
-            columns=["Time (UTC)", "Set", "Pieces", "Rating", "Current Value", "Score"]
+            columns=["Time (UTC)", "Set", "Pieces", "BrickSet Rating", "Current Value", "Score"]
         ),
         use_container_width=True,
     )
