@@ -410,7 +410,7 @@ with Tabs[0]:
             signature_type='auth_header',
         )
 
-        # --- Diagnostics ---
+                # --- Diagnostics (keep) ---
         with st.expander("BrickLink diagnostics"):
             st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
             st.code(f"Server public IP: {get_public_ip()}", language="text")
@@ -423,42 +423,27 @@ with Tabs[0]:
                 st.cache_data.clear()
                 st.success("Cleared API cache.")
 
-        # --- Controls ---
-        colA, colB, colC = st.columns(3)
-        with colA:
-            ui_guide = st.selectbox("Guide Type", ["stock", "sold"], index=0)
-        with colB:
-            ui_condition = st.selectbox("Condition", ["N", "U"], index=0, format_func=lambda v: "New" if v == "N" else "Used")
-        with colC:
-            ui_currency = st.text_input("Currency (optional)", value="")
-
-        colD, colE, colF = st.columns(3)
-        with colD:
-            ui_country = st.text_input("Country code (optional, e.g., US)", value="")
-        with colE:
-            ui_region = st.selectbox("Region (optional)", ["", "asia", "africa", "north_america", "south_america", "middle_east", "europe", "eu", "oceania"], index=0)
-        with colF:
-            ui_vat = st.selectbox("Include VAT", ["", "N", "Y", "O"], index=0)
-
+        # --- No options — just a button ---
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             rows = []
-            # We'll capture per-set details to show below (optional)
             per_set_details: Dict[str, Any] = {}
 
             for s in set_list:
                 log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
+
                 meta = bl_fetch_set_metadata(s, oauth)
                 if "_error" in meta:
                     st.warning(f"{s}: {meta['_error']}")
 
+                # Fixed defaults: stock (current items for sale), New condition
                 price = bl_fetch_price(
                     s, oauth,
-                    guide_type=ui_guide,
-                    new_or_used=ui_condition,
-                    currency_code=(ui_currency or None),
-                    country_code=(ui_country or None),
-                    region=(ui_region or None) if ui_region else None,
-                    vat=(ui_vat or None)
+                    guide_type="stock",
+                    new_or_used="N",
+                    currency_code=None,
+                    country_code=None,
+                    region=None,
+                    vat=None,
                 )
 
                 if "_error" in price:
@@ -486,26 +471,19 @@ with Tabs[0]:
                 save_result(
                     source="BrickLink:row",
                     set_number=s,
-                    params={
-                        "guide": ui_guide,
-                        "cond": ui_condition,
-                        "currency": ui_currency or None,
-                        "country": ui_country or None,
-                        "region": ui_region or None,
-                        "vat": ui_vat or None,
-                    },
+                    params={"guide": "stock", "cond": "N"},
                     payload=row_payload,
                 )
+
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
-            # Optional: show price_detail per set
+            # Optional: keep price_detail table for transparency
             for s in set_list:
                 details = per_set_details.get(s)
                 with st.expander(f"Price detail for {s}"):
                     if details:
-                        df_pg = pd.json_normalize(details)
-                        df_pg = df_pg.rename(columns={
+                        df_pg = pd.json_normalize(details).rename(columns={
                             "seller_name": "Seller",
                             "seller_country_code": "Seller Country",
                             "seller_rating": "Seller Rating",
@@ -518,6 +496,7 @@ with Tabs[0]:
                         st.dataframe(df_pg, use_container_width=True)
                     else:
                         st.info("No price_detail returned for the current parameters.")
+
 
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
