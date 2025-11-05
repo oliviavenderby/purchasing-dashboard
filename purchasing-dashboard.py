@@ -1,5 +1,5 @@
 # purchasing_dashboard.py
-# LEGO Purchasing Assistant with 24h caching + per‑source History tables + Scoring tab
+# LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
 
 import os
 import json
@@ -168,6 +168,7 @@ def _cached_get_json(url: str, params: Optional[dict], oauth: OAuth1, timeout: i
 @st.cache_data(ttl=86400)
 def _cached_post_json(url: str, payload: dict) -> Dict[str, Any]:
     r = requests.post(url, data=payload, timeout=20)
+    # r.raise_for_status()  # optional hardening
     return r.json()
 
 
@@ -185,7 +186,13 @@ def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
     raw = _cached_get_json(url, None, oauth)
     data = raw.get("data", {}) or {}
-    log_query(source="BrickLink:metadata", set_number=set_number, params={"url": url}, cache_hit=True, summary=data.get("name") or "")
+    log_query(
+        source="BrickLink:metadata",
+        set_number=set_number,
+        params={"url": url},
+        cache_hit=True,
+        summary=data.get("name") or "",
+    )
     return {"Set Name": data.get("name"), "Category ID": data.get("category_id")}
 
 
@@ -194,7 +201,13 @@ def bl_fetch_price(set_number: str, oauth: OAuth1, guide_type: str = "stock", ne
     params = {"guide_type": guide_type, "new_or_used": new_or_used}
     raw = _cached_get_json(url, params, oauth)
     data = raw.get("data", {}) or {}
-    log_query(source=f"BrickLink:price:{guide_type}:{new_or_used}", set_number=set_number, params=params, cache_hit=True, summary=f"avg={data.get('avg_price')}")
+    log_query(
+        source=f"BrickLink:price:{guide_type}:{new_or_used}",
+        set_number=set_number,
+        params=params,
+        cache_hit=True,
+        summary=f"avg={data.get('avg_price')}",
+    )
     return data
 
 
@@ -214,9 +227,21 @@ def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
             "Users Owned": collections.get("ownedBy", "N/A"),
             "Users Wanted": collections.get("wantedBy", "N/A"),
         }
-        log_query(source="BrickSet:getSets", set_number=set_number, params={"extendedData": 1}, cache_hit=True, summary=out["Set Name (BrickSet)"])
+        log_query(
+            source="BrickSet:getSets",
+            set_number=set_number,
+            params={"extendedData": 1},
+            cache_hit=True,
+            summary=out["Set Name (BrickSet)"],
+        )
         return out
-    log_query(source="BrickSet:getSets", set_number=set_number, params={"extendedData": 1}, cache_hit=True, summary="no match")
+    log_query(
+        source="BrickSet:getSets",
+        set_number=set_number,
+        params={"extendedData": 1},
+        cache_hit=True,
+        summary="no match",
+    )
     return {"_error": "No match"}
 
 
@@ -226,7 +251,13 @@ def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> 
     status, payload = _cached_get_json_noauth(url, headers, {"currency": currency})
     data = payload.get("data") if (status == 200 and isinstance(payload, dict)) else None
     if not data:
-        log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency}, cache_hit=True, summary=f"HTTP {status}")
+        log_query(
+            source="BrickEconomy:set",
+            set_number=set_number,
+            params={"currency": currency},
+            cache_hit=True,
+            summary=f"HTTP {status}",
+        )
         return {"_error": f"No data (HTTP {status})"}
     out = {
         "Name": data.get("name"),
@@ -237,7 +268,13 @@ def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> 
         "Growth %": data.get("growth_percentage"),
         "URL": data.get("url"),
     }
-    log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency}, cache_hit=True, summary=out["Name"] or "")
+    log_query(
+        source="BrickEconomy:set",
+        set_number=set_number,
+        params={"currency": currency},
+        cache_hit=True,
+        summary=out["Name"] or "",
+    )
     return out
 
 
@@ -295,7 +332,6 @@ with Tabs[0]:
                 log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 meta = bl_fetch_set_metadata(s, oauth)
                 price = bl_fetch_price(s, oauth, "stock", "N")
-                img = bl_fetch_image_url(s, oauth)
                 row_payload = {
                     "Name": meta.get("Set Name"),
                     "Avg Price": price.get("avg_price"),
@@ -303,7 +339,6 @@ with Tabs[0]:
                     "Min": price.get("min_price"),
                     "Max": price.get("max_price"),
                     "Currency": price.get("currency_code"),
-                    "Image": img,
                 }
                 rows.append({"Set": s, **row_payload})
                 save_result(source="BrickLink:row", set_number=s, params={"guide": "stock", "cond": "N"}, payload=row_payload)
@@ -311,7 +346,12 @@ with Tabs[0]:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
-        st.dataframe(hist_bl if not hist_bl.empty else pd.DataFrame(columns=["Time (UTC)","Set","Name","Avg Price","Qty Avg Price","Min","Max","Currency","Image"]), use_container_width=True)
+        st.dataframe(
+            hist_bl if not hist_bl.empty else pd.DataFrame(
+                columns=["Time (UTC)", "Set", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
+            ),
+            use_container_width=True,
+        )
 
 # BrickSet Tab
 with Tabs[1]:
@@ -341,7 +381,12 @@ with Tabs[1]:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
         hist_bs = results_today_df("BrickSet:row")
-        st.dataframe(hist_bs if not hist_bs.empty else pd.DataFrame(columns=["Time (UTC)","Set","Set Name (BrickSet)","Pieces","Minifigs","Theme","Year","Rating","Users Owned","Users Wanted"]), use_container_width=True)
+        st.dataframe(
+            hist_bs if not hist_bs.empty else pd.DataFrame(
+                columns=["Time (UTC)", "Set", "Set Name (BrickSet)", "Pieces", "Minifigs", "Theme", "Year", "Rating", "Users Owned", "Users Wanted"]
+            ),
+            use_container_width=True,
+        )
 
 # BrickEconomy Tab
 with Tabs[2]:
@@ -371,7 +416,12 @@ with Tabs[2]:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
         st.markdown("### History (today)")
         hist_be = results_today_df("BrickEconomy:row")
-        st.dataframe(hist_be if not hist_be.empty else pd.DataFrame(columns=["Time (UTC)","Set","Name","Theme","Year","Retail Price","Current Value","Growth %","URL"]), use_container_width=True)
+        st.dataframe(
+            hist_be if not hist_be.empty else pd.DataFrame(
+                columns=["Time (UTC)", "Set", "Name", "Theme", "Year", "Retail Price", "Current Value", "Growth %", "URL"]
+            ),
+            use_container_width=True,
+        )
 
 # Scoring Tab
 with Tabs[3]:
@@ -401,6 +451,11 @@ with Tabs[3]:
         st.dataframe(pd.DataFrame(scores), use_container_width=True)
     st.markdown("### History (today – Scoring)")
     hist_sc = results_today_df("Scoring:row")
-    st.dataframe(hist_sc if not hist_sc.empty else pd.DataFrame(columns=["Time (UTC)","Set","Pieces","Rating","Current Value","Score"]), use_container_width=True)
+    st.dataframe(
+        hist_sc if not hist_sc.empty else pd.DataFrame(
+            columns=["Time (UTC)", "Set", "Pieces", "Rating", "Current Value", "Score"]
+        ),
+        use_container_width=True,
+    )
 
 st.markdown("<small>Cache TTL: 24h. History shows today's queries and whether they were served from cache.</small>", unsafe_allow_html=True)
