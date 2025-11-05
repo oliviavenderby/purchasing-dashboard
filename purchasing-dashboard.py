@@ -173,11 +173,28 @@ def bl_raw_get(url_path: str, oauth: OAuth1):
     return r.status_code, dict(r.headers), body
 
 
+def _bl_cache_key() -> str:
+    """Vary cache by current creds so new tokens take effect immediately."""
+    vals = [
+        st.session_state.get("bl_consumer_key", ""),
+        st.session_state.get("bl_consumer_secret", ""),
+        st.session_state.get("bl_token", ""),
+        st.session_state.get("bl_token_secret", ""),
+    ]
+    return hashlib.sha256("|".join(vals).encode()).hexdigest()[:16]
+
+
 # =====================
 # Cached HTTP
 # =====================
 @st.cache_data(ttl=86400, hash_funcs={OAuth1: lambda _: "oauth1"})
-def _cached_get_json(url: str, params: Optional[dict], oauth: OAuth1, timeout: int = 20) -> Dict[str, Any]:
+def _cached_get_json(
+    url: str,
+    params: Optional[dict],
+    oauth: OAuth1,
+    cache_key: str,          # <— makes cache sensitive to credentials
+    timeout: int = 20
+) -> Dict[str, Any]:
     r = requests.get(url, params=params, auth=oauth, timeout=timeout)
     r.raise_for_status()
     return r.json()
@@ -193,7 +210,10 @@ def _cached_post_json(url: str, payload: dict) -> Dict[str, Any]:
 @st.cache_data(ttl=86400)
 def _cached_get_json_noauth(url: str, headers: dict, params: dict):
     r = requests.get(url, headers=headers, params=params, timeout=20)
-    return r.status_code, r.json()
+    try:
+        return r.status_code, r.json()
+    except Exception:
+        return r.status_code, {"raw_text": r.text[:400]}
 
 
 # =====================
@@ -202,7 +222,7 @@ def _cached_get_json_noauth(url: str, headers: dict, params: dict):
 
 def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
-    raw = _cached_get_json(url, None, oauth)
+    raw = _cached_get_json(url, None, oauth, _bl_cache_key())
     meta = raw.get("meta", {})
     data = raw.get("data")
     if not isinstance(data, dict):
@@ -220,20 +240,26 @@ def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
 def bl_fetch_price(
     set_number: str,
     oauth: OAuth1,
-    guide_type: str = "stock",
-    new_or_used: str = "N",
+    guide_type: str = "stock",        # "stock" | "sold"
+    new_or_used: str = "N",           # "N" | "U"
     currency_code: Optional[str] = None,
+    country_code: Optional[str] = None,
+    region: Optional[str] = None,     # asia, africa, north_america, south_america, middle_east, europe, eu, oceania
+    color_id: Optional[int] = None,   # not used for SETs, ok to accept
+    vat: Optional[str] = None,        # "N" (default), "Y", "O"
 ) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
-    params = {"guide_type": guide_type, "new_or_used": new_or_used}
-    if currency_code:
-        params["currency_code"] = currency_code
+    params: Dict[str, Any] = {"guide_type": guide_type, "new_or_used": new_or_used}
+    if currency_code: params["currency_code"] = currency_code
+    if country_code:  params["country_code"]  = country_code
+    if region:        params["region"]        = region
+    if color_id is not None: params["color_id"] = int(color_id)
+    if vat in {"N", "Y", "O"}: params["vat"] = vat
 
-    raw = _cached_get_json(url, params, oauth)
+    raw = _cached_get_json(url, params, oauth, _bl_cache_key())
     meta = raw.get("meta", {})
     data = raw.get("data")
     if not isinstance(data, dict):
-        # bubble up an actionable message
         desc = meta.get("description") or meta.get("message") or "No data"
         return {"_error": f"{meta.get('code', '?')}: {desc}"}
 
@@ -283,27 +309,26 @@ def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
 
 def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
     """
-    Calls BrickEconomy 'Get a set' endpoint and maps fields to our UI.
-    API docs: https://www.brickeconomy.com/api-reference
+    BrickEconomy 'Get a set' endpoint, mapped to our UI.
     """
     url = f"https://www.brickeconomy.com/api/v1/set/{set_number}"
-    # BrickEconomy requires Accept, User-Agent, and x-apikey headers
     headers = {
         "accept": "application/json",
         "x-apikey": api_key,
         "User-Agent": "ReUseBricks-Streamlit-App/1.0",
     }
-    # Currency is via query param (ISO 4217); USD default
     status, payload = _cached_get_json_noauth(url, headers, {"currency": currency})
     data = payload.get("data") if (status == 200 and isinstance(payload, dict)) else None
-
     if not data:
-        log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency},
-                  cache_hit=True, summary=f"HTTP {status}")
-        # Surface any error message BrickEconomy returned
+        log_query(
+            source="BrickEconomy:set",
+            set_number=set_number,
+            params={"currency": currency},
+            cache_hit=True,
+            summary=f"HTTP {status}",
+        )
         return {"_error": (payload.get("error") if isinstance(payload, dict) else f"HTTP {status}")}
 
-    # Map region-specific retail price field based on currency (fallback to US if unknown)
     retail_key_by_currency = {
         "USD": "retail_price_us",
         "GBP": "retail_price_uk",
@@ -317,17 +342,21 @@ def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> 
         "Name": data.get("name"),
         "Theme": data.get("theme"),
         "Year": data.get("year"),
-        "Retail Price": data.get(retail_key),             # e.g., retail_price_us
+        "Retail Price": data.get(retail_key),
         "Current Value (New)": data.get("current_value_new"),
         "Current Value (Used)": data.get("current_value_used"),
         "Growth % (12m)": data.get("rolling_growth_12months"),
-        "Currency": data.get("currency"),                 # currency of values returned
+        "Currency": data.get("currency"),
         "URL": f"https://www.brickeconomy.com/set/{set_number}",
     }
-    log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency},
-              cache_hit=True, summary=out["Name"] or "")
+    log_query(
+        source="BrickEconomy:set",
+        set_number=set_number,
+        params={"currency": currency},
+        cache_hit=True,
+        summary=out["Name"] or "",
+    )
     return out
-
 
 
 # =====================
@@ -383,15 +412,18 @@ with Tabs[0]:
 
         # --- Diagnostics ---
         with st.expander("BrickLink diagnostics"):
-            st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP.")
+            st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
             st.code(f"Server public IP: {get_public_ip()}", language="text")
             if st.button("Test BrickLink connection", key="btn_bl_diag"):
                 code, headers, body = bl_raw_get("items/SET/75131-1", oauth)
                 st.write("Status:", code)
                 st.write("Headers:", headers)
                 st.json(body)
+            if st.button("Clear API cache", key="btn_clear_api_cache"):
+                st.cache_data.clear()
+                st.success("Cleared API cache.")
 
-        # --- Controls like your working app ---
+        # --- Controls ---
         colA, colB, colC = st.columns(3)
         with colA:
             ui_guide = st.selectbox("Guide Type", ["stock", "sold"], index=0)
@@ -400,14 +432,34 @@ with Tabs[0]:
         with colC:
             ui_currency = st.text_input("Currency (optional)", value="")
 
+        colD, colE, colF = st.columns(3)
+        with colD:
+            ui_country = st.text_input("Country code (optional, e.g., US)", value="")
+        with colE:
+            ui_region = st.selectbox("Region (optional)", ["", "asia", "africa", "north_america", "south_america", "middle_east", "europe", "eu", "oceania"], index=0)
+        with colF:
+            ui_vat = st.selectbox("Include VAT", ["", "N", "Y", "O"], index=0)
+
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             rows = []
+            # We'll capture per-set details to show below (optional)
+            per_set_details: Dict[str, Any] = {}
+
             for s in set_list:
                 log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 meta = bl_fetch_set_metadata(s, oauth)
                 if "_error" in meta:
                     st.warning(f"{s}: {meta['_error']}")
-                price = bl_fetch_price(s, oauth, ui_guide, ui_condition, ui_currency or None)
+
+                price = bl_fetch_price(
+                    s, oauth,
+                    guide_type=ui_guide,
+                    new_or_used=ui_condition,
+                    currency_code=(ui_currency or None),
+                    country_code=(ui_country or None),
+                    region=(ui_region or None) if ui_region else None,
+                    vat=(ui_vat or None)
+                )
 
                 if "_error" in price:
                     st.warning(f"{s}: {price['_error']}")
@@ -428,16 +480,44 @@ with Tabs[0]:
                         "Max": price.get("max_price"),
                         "Currency": price.get("currency_code"),
                     }
+                    per_set_details[s] = price.get("price_detail")
 
                 rows.append({"Set": s, **row_payload})
                 save_result(
                     source="BrickLink:row",
                     set_number=s,
-                    params={"guide": ui_guide, "cond": ui_condition, "currency": ui_currency or None},
+                    params={
+                        "guide": ui_guide,
+                        "cond": ui_condition,
+                        "currency": ui_currency or None,
+                        "country": ui_country or None,
+                        "region": ui_region or None,
+                        "vat": ui_vat or None,
+                    },
                     payload=row_payload,
                 )
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+            # Optional: show price_detail per set
+            for s in set_list:
+                details = per_set_details.get(s)
+                with st.expander(f"Price detail for {s}"):
+                    if details:
+                        df_pg = pd.json_normalize(details)
+                        df_pg = df_pg.rename(columns={
+                            "seller_name": "Seller",
+                            "seller_country_code": "Seller Country",
+                            "seller_rating": "Seller Rating",
+                            "unit_price": "Unit Price",
+                            "new_or_used": "Condition",
+                            "quantity": "Quantity",
+                            "shipping_available": "Shipping Available",
+                            "date_ordered": "Date Ordered",
+                        })
+                        st.dataframe(df_pg, use_container_width=True)
+                    else:
+                        st.info("No price_detail returned for the current parameters.")
 
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
@@ -497,7 +577,7 @@ with Tabs[2]:
                 log_query(source="UI:BrickEconomy:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 data = brickeconomy_fetch(s, api, currency)
                 row_payload = {
-                     "Name": data.get("Name"),
+                    "Name": data.get("Name"),
                     "Theme": data.get("Theme"),
                     "Year": data.get("Year"),
                     "Retail Price": data.get("Retail Price"),
@@ -507,7 +587,6 @@ with Tabs[2]:
                     "Currency": data.get("Currency"),
                     "URL": data.get("URL"),
                 }
-
                 rows.append({"Set": s, **row_payload})
                 save_result(source="BrickEconomy:row", set_number=s, params={"currency": currency}, payload=row_payload)
             if rows:
@@ -525,7 +604,6 @@ with Tabs[2]:
             use_container_width=True,
         )
 
-
 # Scoring Tab
 with Tabs[3]:
     st.subheader("Scoring")
@@ -539,7 +617,7 @@ with Tabs[3]:
             be = brickeconomy_fetch(s, api_be, cur) if api_be else {}
             pieces = (bs or {}).get("Pieces") or 0
             rating = (bs or {}).get("Rating") or 0
-            value = (be or {}).get("Current Value") or 0
+            value = (be or {}).get("Current Value (New)") or (be or {}).get("Current Value") or 0
             try:
                 p = float(pieces or 0)
                 r = float(rating or 0)
