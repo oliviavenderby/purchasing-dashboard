@@ -282,36 +282,52 @@ def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
 
 
 def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
+    """
+    Calls BrickEconomy 'Get a set' endpoint and maps fields to our UI.
+    API docs: https://www.brickeconomy.com/api-reference
+    """
     url = f"https://www.brickeconomy.com/api/v1/set/{set_number}"
-    headers = {"accept": "application/json", "x-apikey": api_key, "User-Agent": "ReUseBricks-Streamlit-App/1.0"}
+    # BrickEconomy requires Accept, User-Agent, and x-apikey headers
+    headers = {
+        "accept": "application/json",
+        "x-apikey": api_key,
+        "User-Agent": "ReUseBricks-Streamlit-App/1.0",
+    }
+    # Currency is via query param (ISO 4217); USD default
     status, payload = _cached_get_json_noauth(url, headers, {"currency": currency})
     data = payload.get("data") if (status == 200 and isinstance(payload, dict)) else None
+
     if not data:
-        log_query(
-            source="BrickEconomy:set",
-            set_number=set_number,
-            params={"currency": currency},
-            cache_hit=True,
-            summary=f"HTTP {status}",
-        )
-        return {"_error": f"No data (HTTP {status})"}
+        log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency},
+                  cache_hit=True, summary=f"HTTP {status}")
+        # Surface any error message BrickEconomy returned
+        return {"_error": (payload.get("error") if isinstance(payload, dict) else f"HTTP {status}")}
+
+    # Map region-specific retail price field based on currency (fallback to US if unknown)
+    retail_key_by_currency = {
+        "USD": "retail_price_us",
+        "GBP": "retail_price_uk",
+        "CAD": "retail_price_ca",
+        "EUR": "retail_price_eu",
+        "AUD": "retail_price_au",
+    }
+    retail_key = retail_key_by_currency.get(currency.upper(), "retail_price_us")
+
     out = {
         "Name": data.get("name"),
         "Theme": data.get("theme"),
         "Year": data.get("year"),
-        "Retail Price": (data.get("msrp") or {}).get("value"),
-        "Current Value": (data.get("current_value") or {}).get("value"),
-        "Growth %": data.get("growth_percentage"),
-        "URL": data.get("url"),
+        "Retail Price": data.get(retail_key),             # e.g., retail_price_us
+        "Current Value (New)": data.get("current_value_new"),
+        "Current Value (Used)": data.get("current_value_used"),
+        "Growth % (12m)": data.get("rolling_growth_12months"),
+        "Currency": data.get("currency"),                 # currency of values returned
+        "URL": f"https://www.brickeconomy.com/set/{set_number}",
     }
-    log_query(
-        source="BrickEconomy:set",
-        set_number=set_number,
-        params={"currency": currency},
-        cache_hit=True,
-        summary=out["Name"] or "",
-    )
+    log_query(source="BrickEconomy:set", set_number=set_number, params={"currency": currency},
+              cache_hit=True, summary=out["Name"] or "")
     return out
+
 
 
 # =====================
@@ -481,14 +497,17 @@ with Tabs[2]:
                 log_query(source="UI:BrickEconomy:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 data = brickeconomy_fetch(s, api, currency)
                 row_payload = {
-                    "Name": data.get("Name"),
+                     "Name": data.get("Name"),
                     "Theme": data.get("Theme"),
                     "Year": data.get("Year"),
                     "Retail Price": data.get("Retail Price"),
-                    "Current Value": data.get("Current Value"),
-                    "Growth %": data.get("Growth %"),
+                    "Current Value (New)": data.get("Current Value (New)"),
+                    "Current Value (Used)": data.get("Current Value (Used)"),
+                    "Growth % (12m)": data.get("Growth % (12m)"),
+                    "Currency": data.get("Currency"),
                     "URL": data.get("URL"),
                 }
+
                 rows.append({"Set": s, **row_payload})
                 save_result(source="BrickEconomy:row", set_number=s, params={"currency": currency}, payload=row_payload)
             if rows:
@@ -497,10 +516,15 @@ with Tabs[2]:
         hist_be = results_today_df("BrickEconomy:row")
         st.dataframe(
             hist_be if not hist_be.empty else pd.DataFrame(
-                columns=["Time (UTC)", "Set", "Name", "Theme", "Year", "Retail Price", "Current Value", "Growth %", "URL"]
+                columns=[
+                    "Time (UTC)", "Set", "Name", "Theme", "Year",
+                    "Retail Price", "Current Value (New)", "Current Value (Used)",
+                    "Growth % (12m)", "Currency", "URL"
+                ]
             ),
             use_container_width=True,
         )
+
 
 # Scoring Tab
 with Tabs[3]:
