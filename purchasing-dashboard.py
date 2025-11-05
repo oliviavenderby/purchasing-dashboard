@@ -604,11 +604,25 @@ with Tabs[3]:
             except Exception:
                 p, r, v = 0.0, 0.0, 0.0
             score_val = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
-            row_payload = {"Pieces": pieces, "Rating": rating, "Current Value": value, "Score": round(score_val, 2)}
+
+            # ✅ Rename the column to make the source clear
+            row_payload = {"Pieces": pieces, "BrickSet Rating": rating, "Current Value": value, "Score": round(score_val, 2)}
             scores.append({"Set": s, **row_payload})
+
             # Save scoring result as its own unique history type
-            save_result(source="Scoring:row", set_number=s, params={"formula":"0.4p/1000+0.4r+0.2v/100"}, payload=row_payload)
-        st.dataframe(pd.DataFrame(scores), use_container_width=True)
+            save_result(
+                source="Scoring:row",
+                set_number=s,
+                params={"formula":"0.4p/1000+0.4r+0.2v/100"},
+                payload=row_payload
+            )
+
+        df_scores = pd.DataFrame(scores)
+        # Optional: force column order
+        cols = ["Set", "Pieces", "BrickSet Rating", "Current Value", "Score"]
+        st.dataframe(df_scores[cols] if all(c in df_scores.columns for c in cols) else df_scores,
+                     use_container_width=True)
+
     st.markdown("### History (today – Scoring)")
     hist_sc = results_today_df("Scoring:row")
     st.dataframe(
@@ -617,5 +631,6 @@ with Tabs[3]:
         ),
         use_container_width=True,
     )
+
 
 st.markdown("<small>Cache TTL: 24h. History shows today's queries and whether they were served from cache.</small>", unsafe_allow_html=True)
