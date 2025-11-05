@@ -155,6 +155,24 @@ def parse_set_input(raw: str) -> List[str]:
     return [p for p in parts if p]
 
 
+def get_public_ip() -> str:
+    try:
+        return requests.get("https://api.ipify.org", timeout=10).text
+    except Exception:
+        return "unknown"
+
+
+def bl_raw_get(url_path: str, oauth: OAuth1):
+    """Low-level GET for diagnostics."""
+    url = f"https://api.bricklink.com/api/store/v1/{url_path.lstrip('/')}"
+    r = requests.get(url, auth=oauth, timeout=20)
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw_text": r.text[:400]}
+    return r.status_code, dict(r.headers), body
+
+
 # =====================
 # Cached HTTP
 # =====================
@@ -185,7 +203,10 @@ def _cached_get_json_noauth(url: str, headers: dict, params: dict):
 def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
     raw = _cached_get_json(url, None, oauth)
-    data = raw.get("data", {}) or {}
+    meta = raw.get("meta", {})
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        return {"_error": f"{meta.get('code', '?')}: {meta.get('description', 'No data')}"}
     log_query(
         source="BrickLink:metadata",
         set_number=set_number,
@@ -196,11 +217,26 @@ def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
     return {"Set Name": data.get("name"), "Category ID": data.get("category_id")}
 
 
-def bl_fetch_price(set_number: str, oauth: OAuth1, guide_type: str = "stock", new_or_used: str = "N") -> Dict[str, Any]:
+def bl_fetch_price(
+    set_number: str,
+    oauth: OAuth1,
+    guide_type: str = "stock",
+    new_or_used: str = "N",
+    currency_code: Optional[str] = None,
+) -> Dict[str, Any]:
     url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
     params = {"guide_type": guide_type, "new_or_used": new_or_used}
+    if currency_code:
+        params["currency_code"] = currency_code
+
     raw = _cached_get_json(url, params, oauth)
-    data = raw.get("data", {}) or {}
+    meta = raw.get("meta", {})
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        # bubble up an actionable message
+        desc = meta.get("description") or meta.get("message") or "No data"
+        return {"_error": f"{meta.get('code', '?')}: {desc}"}
+
     log_query(
         source=f"BrickLink:price:{guide_type}:{new_or_used}",
         set_number=set_number,
@@ -325,25 +361,68 @@ with Tabs[0]:
             client_secret=st.session_state.bl_consumer_secret,
             resource_owner_key=st.session_state.bl_token,
             resource_owner_secret=st.session_state.bl_token_secret,
+            signature_method='HMAC-SHA1',
+            signature_type='auth_header',
         )
+
+        # --- Diagnostics ---
+        with st.expander("BrickLink diagnostics"):
+            st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP.")
+            st.code(f"Server public IP: {get_public_ip()}", language="text")
+            if st.button("Test BrickLink connection", key="btn_bl_diag"):
+                code, headers, body = bl_raw_get("items/SET/75131-1", oauth)
+                st.write("Status:", code)
+                st.write("Headers:", headers)
+                st.json(body)
+
+        # --- Controls like your working app ---
+        colA, colB, colC = st.columns(3)
+        with colA:
+            ui_guide = st.selectbox("Guide Type", ["stock", "sold"], index=0)
+        with colB:
+            ui_condition = st.selectbox("Condition", ["N", "U"], index=0, format_func=lambda v: "New" if v == "N" else "Used")
+        with colC:
+            ui_currency = st.text_input("Currency (optional)", value="")
+
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             rows = []
             for s in set_list:
                 log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
                 meta = bl_fetch_set_metadata(s, oauth)
-                price = bl_fetch_price(s, oauth, "stock", "N")
-                row_payload = {
-                    "Name": meta.get("Set Name"),
-                    "Avg Price": price.get("avg_price"),
-                    "Qty Avg Price": price.get("qty_avg_price"),
-                    "Min": price.get("min_price"),
-                    "Max": price.get("max_price"),
-                    "Currency": price.get("currency_code"),
-                }
+                if "_error" in meta:
+                    st.warning(f"{s}: {meta['_error']}")
+                price = bl_fetch_price(s, oauth, ui_guide, ui_condition, ui_currency or None)
+
+                if "_error" in price:
+                    st.warning(f"{s}: {price['_error']}")
+                    row_payload = {
+                        "Name": meta.get("Set Name"),
+                        "Avg Price": None,
+                        "Qty Avg Price": None,
+                        "Min": None,
+                        "Max": None,
+                        "Currency": None,
+                    }
+                else:
+                    row_payload = {
+                        "Name": meta.get("Set Name"),
+                        "Avg Price": price.get("avg_price"),
+                        "Qty Avg Price": price.get("qty_avg_price"),
+                        "Min": price.get("min_price"),
+                        "Max": price.get("max_price"),
+                        "Currency": price.get("currency_code"),
+                    }
+
                 rows.append({"Set": s, **row_payload})
-                save_result(source="BrickLink:row", set_number=s, params={"guide": "stock", "cond": "N"}, payload=row_payload)
+                save_result(
+                    source="BrickLink:row",
+                    set_number=s,
+                    params={"guide": ui_guide, "cond": ui_condition, "currency": ui_currency or None},
+                    payload=row_payload,
+                )
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
         st.dataframe(
