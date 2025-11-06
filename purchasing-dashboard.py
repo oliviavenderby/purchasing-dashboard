@@ -159,8 +159,8 @@ def parse_set_input(raw: str) -> List[str]:
 
 def infer_item_type_and_no(raw: str) -> tuple[str, str]:
     """
-    Heuristics for BrickLink:
-      - If string contains any letters -> assume MINIFIG (e.g., sw0701).
+    Heuristics:
+      - If string contains any letters -> MINIFIG (e.g., sw0701).
       - Else treat as SET; add '-1' if not present.
     """
     s = (raw or "").strip()
@@ -212,7 +212,7 @@ def _cached_get_json(
     timeout: int = 20
 ) -> Dict[str, Any]:
     r = requests.get(url, params=params, auth=oauth, timeout=timeout)
-    # Do NOT raise_for_status: BL returns useful meta on 4xx/5xx
+    # Don't raise on 4xx; BrickLink returns useful meta
     try:
         return r.json()
     except Exception:
@@ -238,7 +238,7 @@ def _cached_get_json_noauth(url: str, headers: dict, params: dict):
 
 
 # =====================
-# API Wrappers + Logging
+# BrickLink API Wrappers + Logging
 # =====================
 
 def bl_fetch_metadata(item_type: str, item_no: str, oauth: OAuth1) -> Dict[str, Any]:
@@ -295,6 +295,10 @@ def bl_fetch_price(
     return data
 
 
+# =====================
+# BrickSet Wrapper
+# =====================
+
 def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
     payload = {"apiKey": api_key, "userHash": "", "params": json.dumps({"setNumber": set_number, "extendedData": 1})}
     data = _cached_post_json("https://brickset.com/api/v3.asmx/getSets", payload)
@@ -329,9 +333,56 @@ def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
     return {"_error": "No match"}
 
 
-def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
-    """BrickEconomy 'Get a set' endpoint."""
-    url = f"https://www.brickeconomy.com/api/v1/set/{set_number}"
+# =====================
+# BrickEconomy Wrappers (SET + MINIFIG)
+# =====================
+
+def _be_common_out(data: dict, set_or_fig_no: str, item_type: str, currency: str) -> Dict[str, Any]:
+    """
+    Normalize BrickEconomy payload for both Sets and Minifigs into a single row schema.
+    """
+    # Theme/Series can vary by object; try a few sensible keys
+    theme = data.get("theme") or data.get("series") or data.get("subtheme") or data.get("category")
+    # Year keys can vary as well
+    year = data.get("year") or data.get("release_year") or data.get("first_year")
+
+    # Retail only makes sense for sets (keep Nones for figs)
+    retail_key_by_currency = {
+        "USD": "retail_price_us",
+        "GBP": "retail_price_uk",
+        "CAD": "retail_price_ca",
+        "EUR": "retail_price_eu",
+        "AUD": "retail_price_au",
+    }
+    retail_val = None
+    if item_type == "SET":
+        retail_key = retail_key_by_currency.get(currency.upper(), "retail_price_us")
+        retail_val = data.get(retail_key)
+
+    return {
+        "Item": set_or_fig_no,
+        "Type": item_type,
+        "Name": data.get("name") or data.get("title"),
+        "Theme/Series": theme,
+        "Year": year,
+        "Retail Price": retail_val,
+        "Current Value (New)": data.get("current_value_new"),
+        "Current Value (Used)": data.get("current_value_used"),
+        "Growth % (12m)": data.get("rolling_growth_12months"),
+        "Currency": data.get("currency") or currency.upper(),
+        "URL": f"https://www.brickeconomy.com/{'set' if item_type=='SET' else 'minifig'}/{set_or_fig_no}",
+    }
+
+
+def brickeconomy_fetch_any(item_type: str, code: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
+    """
+    Calls BrickEconomy for either a SET or a MINIFIG and returns a normalized row.
+    """
+    if item_type not in {"SET", "MINIFIG"}:
+        return {"_error": f"Unsupported type: {item_type}"}
+
+    endpoint = "set" if item_type == "SET" else "minifig"
+    url = f"https://www.brickeconomy.com/api/v1/{endpoint}/{code}"
     headers = {
         "accept": "application/json",
         "x-apikey": api_key,
@@ -341,37 +392,18 @@ def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> 
     data = payload.get("data") if (status == 200 and isinstance(payload, dict)) else None
     if not data:
         log_query(
-            source="BrickEconomy:set",
-            set_number=set_number,
+            source=f"BrickEconomy:{endpoint}",
+            set_number=code,
             params={"currency": currency},
             cache_hit=True,
             summary=f"HTTP {status}",
         )
         return {"_error": (payload.get("error") if isinstance(payload, dict) else f"HTTP {status}")}
 
-    retail_key_by_currency = {
-        "USD": "retail_price_us",
-        "GBP": "retail_price_uk",
-        "CAD": "retail_price_ca",
-        "EUR": "retail_price_eu",
-        "AUD": "retail_price_au",
-    }
-    retail_key = retail_key_by_currency.get(currency.upper(), "retail_price_us")
-
-    out = {
-        "Name": data.get("name"),
-        "Theme": data.get("theme"),
-        "Year": data.get("year"),
-        "Retail Price": data.get(retail_key),
-        "Current Value (New)": data.get("current_value_new"),
-        "Current Value (Used)": data.get("current_value_used"),
-        "Growth % (12m)": data.get("rolling_growth_12months"),
-        "Currency": data.get("currency"),
-        "URL": f"https://www.brickeconomy.com/set/{set_number}",
-    }
+    out = _be_common_out(data, code, item_type, currency)
     log_query(
-        source="BrickEconomy:set",
-        set_number=set_number,
+        source=f"BrickEconomy:{endpoint}",
+        set_number=code,
         params={"currency": currency},
         cache_hit=True,
         summary=out["Name"] or "",
@@ -405,7 +437,7 @@ with st.sidebar:
 # =====================
 st.title("LEGO Purchasing Assistant")
 raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
-# Keep for other tabs (BrickSet/BrickEconomy expect sets); for BrickLink we infer per item
+# Keep this for tabs that only handle sets (BrickSet/Scoring). BrickLink/BrickEconomy infer per item.
 set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
 
 Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
@@ -431,7 +463,6 @@ with Tabs[0]:
             signature_type='auth_header',
         )
 
-        # Diagnostics
         with st.expander("BrickLink diagnostics"):
             st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
             st.code(f"Server public IP: {get_public_ip()}", language="text")
@@ -444,12 +475,10 @@ with Tabs[0]:
                 st.cache_data.clear()
                 st.success("Cleared API cache.")
 
-        # No options — just a button using defaults (stock, New)
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             rows = []
             per_item_details: Dict[str, Any] = {}
 
-            # Re-parse the raw text and infer item type for BrickLink specifically
             for raw in parse_set_input(raw_sets):
                 item_type, item_no = infer_item_type_and_no(raw)
 
@@ -511,7 +540,6 @@ with Tabs[0]:
                 cols = ["Item", "Type", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
                 st.dataframe(df[cols] if all(c in df.columns for c in cols) else df, use_container_width=True)
 
-            # Optional: detailed rows
             for raw in parse_set_input(raw_sets):
                 _, item_no = infer_item_type_and_no(raw)
                 details = per_item_details.get(item_no)
@@ -575,7 +603,7 @@ with Tabs[1]:
             use_container_width=True,
         )
 
-# BrickEconomy Tab
+# BrickEconomy Tab (now supports SET + MINIFIG)
 with Tabs[2]:
     st.subheader("BrickEconomy Data")
     api = st.session_state.get("brickeconomy_api_key", "")
@@ -585,30 +613,50 @@ with Tabs[2]:
     else:
         if st.button("Fetch BrickEconomy Data", key="btn_fetch_be"):
             rows = []
-            for s in set_list:
-                log_query(source="UI:BrickEconomy:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
-                data = brickeconomy_fetch(s, api, currency)
-                row_payload = {
-                    "Name": data.get("Name"),
-                    "Theme": data.get("Theme"),
-                    "Year": data.get("Year"),
-                    "Retail Price": data.get("Retail Price"),
-                    "Current Value (New)": data.get("Current Value (New)"),
-                    "Current Value (Used)": data.get("Current Value (Used)"),
-                    "Growth % (12m)": data.get("Growth % (12m)"),
-                    "Currency": data.get("Currency"),
-                    "URL": data.get("URL"),
-                }
-                rows.append({"Set": s, **row_payload})
-                save_result(source="BrickEconomy:row", set_number=s, params={"currency": currency}, payload=row_payload)
+            # Parse raw input and infer per-item (SET or MINIFIG)
+            for raw in parse_set_input(raw_sets):
+                item_type, item_no = infer_item_type_and_no(raw)
+                log_query(source="UI:BrickEconomy:fetch", set_number=item_no, params={"action": "fetch", "type": item_type}, cache_hit=True, summary="requested")
+
+                data = brickeconomy_fetch_any(item_type, item_no, api, currency)
+
+                if "_error" in data:
+                    st.warning(f"{item_type} {item_no}: {data['_error']}")
+                    # still add a row placeholder for visibility
+                    row_payload = {
+                        "Item": item_no,
+                        "Type": item_type,
+                        "Name": None,
+                        "Theme/Series": None,
+                        "Year": None,
+                        "Retail Price": None,
+                        "Current Value (New)": None,
+                        "Current Value (Used)": None,
+                        "Growth % (12m)": None,
+                        "Currency": None,
+                        "URL": None,
+                    }
+                else:
+                    row_payload = data
+
+                rows.append(row_payload)
+                save_result(source="BrickEconomy:row", set_number=item_no, params={"currency": currency, "type": item_type}, payload=row_payload)
+
             if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                df = pd.DataFrame(rows)
+                cols = [
+                    "Item", "Type", "Name", "Theme/Series", "Year",
+                    "Retail Price", "Current Value (New)", "Current Value (Used)",
+                    "Growth % (12m)", "Currency", "URL"
+                ]
+                st.dataframe(df[cols] if all(c in df.columns for c in cols) else df, use_container_width=True)
+
         st.markdown("### History (today)")
         hist_be = results_today_df("BrickEconomy:row")
         st.dataframe(
             hist_be if not hist_be.empty else pd.DataFrame(
                 columns=[
-                    "Time (UTC)", "Item", "Name", "Theme", "Year",
+                    "Time (UTC)", "Item", "Type", "Name", "Theme/Series", "Year",
                     "Retail Price", "Current Value (New)", "Current Value (Used)",
                     "Growth % (12m)", "Currency", "URL"
                 ]
@@ -626,7 +674,7 @@ with Tabs[3]:
         cur = st.session_state.get("brickeconomy_currency", "USD") or "USD"
         for s in set_list:
             bs = brickset_fetch(s, api_bs) if api_bs else {}
-            be = brickeconomy_fetch(s, api_be, cur) if api_be else {}
+            be = brickeconomy_fetch_any("SET", s, api_be, cur) if api_be else {}
             pieces = (bs or {}).get("Pieces") or 0
             rating = (bs or {}).get("Rating") or 0
             value = (be or {}).get("Current Value (New)") or (be or {}).get("Current Value") or 0
@@ -638,7 +686,6 @@ with Tabs[3]:
                 p, r, v = 0.0, 0.0, 0.0
             score_val = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
 
-            # Column renamed to show source clearly
             row_payload = {"Pieces": pieces, "BrickSet Rating": rating, "Current Value": value, "Score": round(score_val, 2)}
             scores.append({"Set": s, **row_payload})
 
