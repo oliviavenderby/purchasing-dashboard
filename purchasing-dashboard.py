@@ -5,6 +5,7 @@ import os
 import json
 import sqlite3
 import hashlib
+import re
 from datetime import datetime, timezone, date
 from typing import Optional, List, Dict, Any
 
@@ -119,7 +120,7 @@ def results_today_df(source_exact: str) -> pd.DataFrame:
     for ts_utc, set_number, payload in rows:
         try:
             row = json.loads(payload)
-            row = {**{"Time (UTC)": ts_utc, "Set": set_number}, **row}
+            row = {**{"Time (UTC)": ts_utc, "Item": set_number}, **row}
             parsed.append(row)
         except Exception:
             continue
@@ -142,6 +143,7 @@ def clear_history_today():
 # Helpers
 # =====================
 def normalize_set_number(s: str) -> str:
+    """(Kept for other tabs) Add -1 to plain digits that are sets."""
     if not s:
         return ""
     s = s.strip()
@@ -153,6 +155,20 @@ def parse_set_input(raw: str) -> List[str]:
         return []
     parts = [p.strip() for p in raw.replace("\n", ",").split(",")]
     return [p for p in parts if p]
+
+
+def infer_item_type_and_no(raw: str) -> tuple[str, str]:
+    """
+    Heuristics for BrickLink:
+      - If string contains any letters -> assume MINIFIG (e.g., sw0701).
+      - Else treat as SET; add '-1' if not present.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "SET", s
+    if re.search(r"[A-Za-z]", s):
+        return "MINIFIG", s
+    return "SET", (s if "-" in s else f"{s}-1")
 
 
 def get_public_ip() -> str:
@@ -192,19 +208,24 @@ def _cached_get_json(
     url: str,
     params: Optional[dict],
     oauth: OAuth1,
-    cache_key: str,          # <— makes cache sensitive to credentials
+    cache_key: str,          # makes cache sensitive to credentials
     timeout: int = 20
 ) -> Dict[str, Any]:
     r = requests.get(url, params=params, auth=oauth, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+    # Do NOT raise_for_status: BL returns useful meta on 4xx/5xx
+    try:
+        return r.json()
+    except Exception:
+        return {"meta": {"code": r.status_code, "description": "non-JSON response"}, "raw_text": r.text[:400]}
 
 
 @st.cache_data(ttl=86400)
 def _cached_post_json(url: str, payload: dict) -> Dict[str, Any]:
     r = requests.post(url, data=payload, timeout=20)
-    # r.raise_for_status()  # optional hardening
-    return r.json()
+    try:
+        return r.json()
+    except Exception:
+        return {"status": "error", "raw_text": r.text[:400]}
 
 
 @st.cache_data(ttl=86400)
@@ -220,8 +241,8 @@ def _cached_get_json_noauth(url: str, headers: dict, params: dict):
 # API Wrappers + Logging
 # =====================
 
-def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
-    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}"
+def bl_fetch_metadata(item_type: str, item_no: str, oauth: OAuth1) -> Dict[str, Any]:
+    url = f"https://api.bricklink.com/api/store/v1/items/{item_type}/{item_no}"
     raw = _cached_get_json(url, None, oauth, _bl_cache_key())
     meta = raw.get("meta", {})
     data = raw.get("data")
@@ -229,26 +250,27 @@ def bl_fetch_set_metadata(set_number: str, oauth: OAuth1) -> Dict[str, Any]:
         return {"_error": f"{meta.get('code', '?')}: {meta.get('description', 'No data')}"}
     log_query(
         source="BrickLink:metadata",
-        set_number=set_number,
-        params={"url": url},
+        set_number=item_no,
+        params={"url": url, "type": item_type},
         cache_hit=True,
         summary=data.get("name") or "",
     )
-    return {"Set Name": data.get("name"), "Category ID": data.get("category_id")}
+    return {"Name": data.get("name"), "Category ID": data.get("category_id")}
 
 
 def bl_fetch_price(
-    set_number: str,
+    item_type: str,
+    item_no: str,
     oauth: OAuth1,
     guide_type: str = "stock",        # "stock" | "sold"
     new_or_used: str = "N",           # "N" | "U"
     currency_code: Optional[str] = None,
     country_code: Optional[str] = None,
     region: Optional[str] = None,     # asia, africa, north_america, south_america, middle_east, europe, eu, oceania
-    color_id: Optional[int] = None,   # not used for SETs, ok to accept
+    color_id: Optional[int] = None,   # ignored for SET/MINIFIG
     vat: Optional[str] = None,        # "N" (default), "Y", "O"
 ) -> Dict[str, Any]:
-    url = f"https://api.bricklink.com/api/store/v1/items/SET/{set_number}/price"
+    url = f"https://api.bricklink.com/api/store/v1/items/{item_type}/{item_no}/price"
     params: Dict[str, Any] = {"guide_type": guide_type, "new_or_used": new_or_used}
     if currency_code: params["currency_code"] = currency_code
     if country_code:  params["country_code"]  = country_code
@@ -264,8 +286,8 @@ def bl_fetch_price(
         return {"_error": f"{meta.get('code', '?')}: {desc}"}
 
     log_query(
-        source=f"BrickLink:price:{guide_type}:{new_or_used}",
-        set_number=set_number,
+        source=f"BrickLink:price:{item_type}:{guide_type}:{new_or_used}",
+        set_number=item_no,
         params=params,
         cache_hit=True,
         summary=f"avg={data.get('avg_price')}",
@@ -308,9 +330,7 @@ def brickset_fetch(set_number: str, api_key: str) -> Dict[str, Any]:
 
 
 def brickeconomy_fetch(set_number: str, api_key: str, currency: str = "USD") -> Dict[str, Any]:
-    """
-    BrickEconomy 'Get a set' endpoint, mapped to our UI.
-    """
+    """BrickEconomy 'Get a set' endpoint."""
     url = f"https://www.brickeconomy.com/api/v1/set/{set_number}"
     headers = {
         "accept": "application/json",
@@ -385,6 +405,7 @@ with st.sidebar:
 # =====================
 st.title("LEGO Purchasing Assistant")
 raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
+# Keep for other tabs (BrickSet/BrickEconomy expect sets); for BrickLink we infer per item
 set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
 
 Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
@@ -410,7 +431,7 @@ with Tabs[0]:
             signature_type='auth_header',
         )
 
-                # --- Diagnostics (keep) ---
+        # Diagnostics
         with st.expander("BrickLink diagnostics"):
             st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
             st.code(f"Server public IP: {get_public_ip()}", language="text")
@@ -423,21 +444,29 @@ with Tabs[0]:
                 st.cache_data.clear()
                 st.success("Cleared API cache.")
 
-        # --- No options — just a button ---
+        # No options — just a button using defaults (stock, New)
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             rows = []
-            per_set_details: Dict[str, Any] = {}
+            per_item_details: Dict[str, Any] = {}
 
-            for s in set_list:
-                log_query(source="UI:BrickLink:fetch", set_number=s, params={"action": "fetch"}, cache_hit=True, summary="requested")
+            # Re-parse the raw text and infer item type for BrickLink specifically
+            for raw in parse_set_input(raw_sets):
+                item_type, item_no = infer_item_type_and_no(raw)
 
-                meta = bl_fetch_set_metadata(s, oauth)
+                log_query(
+                    source="UI:BrickLink:fetch",
+                    set_number=item_no,
+                    params={"action": "fetch", "type": item_type},
+                    cache_hit=True,
+                    summary="requested"
+                )
+
+                meta = bl_fetch_metadata(item_type, item_no, oauth)
                 if "_error" in meta:
-                    st.warning(f"{s}: {meta['_error']}")
+                    st.warning(f"{item_type} {item_no}: {meta['_error']}")
 
-                # Fixed defaults: stock (current items for sale), New condition
                 price = bl_fetch_price(
-                    s, oauth,
+                    item_type, item_no, oauth,
                     guide_type="stock",
                     new_or_used="N",
                     currency_code=None,
@@ -447,41 +476,46 @@ with Tabs[0]:
                 )
 
                 if "_error" in price:
-                    st.warning(f"{s}: {price['_error']}")
+                    st.warning(f"{item_type} {item_no}: {price['_error']}")
                     row_payload = {
-                        "Name": meta.get("Set Name"),
+                        "Name": meta.get("Name"),
                         "Avg Price": None,
                         "Qty Avg Price": None,
                         "Min": None,
                         "Max": None,
                         "Currency": None,
+                        "Type": item_type,
                     }
                 else:
                     row_payload = {
-                        "Name": meta.get("Set Name"),
+                        "Name": meta.get("Name"),
                         "Avg Price": price.get("avg_price"),
                         "Qty Avg Price": price.get("qty_avg_price"),
                         "Min": price.get("min_price"),
                         "Max": price.get("max_price"),
                         "Currency": price.get("currency_code"),
+                        "Type": item_type,
                     }
-                    per_set_details[s] = price.get("price_detail")
+                    per_item_details[item_no] = price.get("price_detail")
 
-                rows.append({"Set": s, **row_payload})
+                rows.append({"Item": item_no, **row_payload})
                 save_result(
                     source="BrickLink:row",
-                    set_number=s,
-                    params={"guide": "stock", "cond": "N"},
+                    set_number=item_no,
+                    params={"type": item_type, "guide": "stock", "cond": "N"},
                     payload=row_payload,
                 )
 
             if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                df = pd.DataFrame(rows)
+                cols = ["Item", "Type", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
+                st.dataframe(df[cols] if all(c in df.columns for c in cols) else df, use_container_width=True)
 
-            # Optional: keep price_detail table for transparency
-            for s in set_list:
-                details = per_set_details.get(s)
-                with st.expander(f"Price detail for {s}"):
+            # Optional: detailed rows
+            for raw in parse_set_input(raw_sets):
+                _, item_no = infer_item_type_and_no(raw)
+                details = per_item_details.get(item_no)
+                with st.expander(f"Price detail for {item_no}"):
                     if details:
                         df_pg = pd.json_normalize(details).rename(columns={
                             "seller_name": "Seller",
@@ -497,12 +531,11 @@ with Tabs[0]:
                     else:
                         st.info("No price_detail returned for the current parameters.")
 
-
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
         st.dataframe(
             hist_bl if not hist_bl.empty else pd.DataFrame(
-                columns=["Time (UTC)", "Set", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
+                columns=["Time (UTC)", "Item", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
             ),
             use_container_width=True,
         )
@@ -537,7 +570,7 @@ with Tabs[1]:
         hist_bs = results_today_df("BrickSet:row")
         st.dataframe(
             hist_bs if not hist_bs.empty else pd.DataFrame(
-                columns=["Time (UTC)", "Set", "Set Name (BrickSet)", "Pieces", "Minifigs", "Theme", "Year", "Rating", "Users Owned", "Users Wanted"]
+                columns=["Time (UTC)", "Item", "Set Name (BrickSet)", "Pieces", "Minifigs", "Theme", "Year", "Rating", "Users Owned", "Users Wanted"]
             ),
             use_container_width=True,
         )
@@ -575,7 +608,7 @@ with Tabs[2]:
         st.dataframe(
             hist_be if not hist_be.empty else pd.DataFrame(
                 columns=[
-                    "Time (UTC)", "Set", "Name", "Theme", "Year",
+                    "Time (UTC)", "Item", "Name", "Theme", "Year",
                     "Retail Price", "Current Value (New)", "Current Value (Used)",
                     "Growth % (12m)", "Currency", "URL"
                 ]
@@ -605,11 +638,10 @@ with Tabs[3]:
                 p, r, v = 0.0, 0.0, 0.0
             score_val = 0.4*(p/1000) + 0.4*r + 0.2*(v/100)
 
-            # ✅ Rename the column to make the source clear
+            # Column renamed to show source clearly
             row_payload = {"Pieces": pieces, "BrickSet Rating": rating, "Current Value": value, "Score": round(score_val, 2)}
             scores.append({"Set": s, **row_payload})
 
-            # Save scoring result as its own unique history type
             save_result(
                 source="Scoring:row",
                 set_number=s,
@@ -618,7 +650,6 @@ with Tabs[3]:
             )
 
         df_scores = pd.DataFrame(scores)
-        # Optional: force column order
         cols = ["Set", "Pieces", "BrickSet Rating", "Current Value", "Score"]
         st.dataframe(df_scores[cols] if all(c in df_scores.columns for c in cols) else df_scores,
                      use_container_width=True)
@@ -627,10 +658,9 @@ with Tabs[3]:
     hist_sc = results_today_df("Scoring:row")
     st.dataframe(
         hist_sc if not hist_sc.empty else pd.DataFrame(
-            columns=["Time (UTC)", "Set", "Pieces", "BrickSet Rating", "Current Value", "Score"]
+            columns=["Time (UTC)", "Item", "Pieces", "BrickSet Rating", "Current Value", "Score"]
         ),
         use_container_width=True,
     )
-
 
 st.markdown("<small>Cache TTL: 24h. History shows today's queries and whether they were served from cache.</small>", unsafe_allow_html=True)
