@@ -18,6 +18,8 @@ from requests_oauthlib import OAuth1
 # Configure these in Streamlit Cloud (or .streamlit/secrets.toml) rather than hard-coding.
 BL_CONSUMER_KEY = st.secrets.get("BRICKLINK_CONSUMER_KEY", "")
 BL_CONSUMER_SECRET = st.secrets.get("BRICKLINK_CONSUMER_SECRET", "")
+BL_TOKEN = st.secrets.get("BRICKLINK_TOKEN", "")
+BL_TOKEN_SECRET = st.secrets.get("BRICKLINK_TOKEN_SECRET", "")
 
 BRICKSET_API_KEY = st.secrets.get("BRICKSET_API_KEY", "")
 
@@ -231,14 +233,14 @@ def bl_raw_get(url_path: str, oauth: OAuth1):
 
 
 def _bl_cache_key() -> str:
-    """Vary cache by current creds so new tokens take effect immediately."""
     vals = [
         BL_CONSUMER_KEY or "",
         BL_CONSUMER_SECRET or "",
-        st.session_state.get("bl_token", ""),
-        st.session_state.get("bl_token_secret", ""),
+        BL_TOKEN or "",
+        BL_TOKEN_SECRET or "",
     ]
     return hashlib.sha256("|".join(vals).encode()).hexdigest()[:16]
+
 
 
 # =====================
@@ -437,14 +439,14 @@ with st.sidebar:
     st.title("ReUseBricks")
 
     st.subheader("BrickLink")
-    st.caption("Consumer Key & Secret are configured via Streamlit Secrets.")
-    st.text_input("Token", type="password", key="bl_token")
-    st.text_input("Token Secret", type="password", key="bl_token_secret")
+    st.caption("All BrickLink keys and tokens are configured via Streamlit Secrets (0.0.0.0 wildcard).")
+
+    bl_ok = all([BL_CONSUMER_KEY, BL_CONSUMER_SECRET, BL_TOKEN, BL_TOKEN_SECRET])
 
     st.markdown("---")
     st.subheader("Connections status")
     st.markdown(
-        f"**BrickLink:** {'✅ Configured' if BL_CONSUMER_KEY and BL_CONSUMER_SECRET else '❌ Missing consumer key/secret in secrets.'}"
+        f"**BrickLink:** {'✅ Connected' if bl_ok else '❌ Missing one or more keys in secrets.'}"
     )
     st.markdown(
         f"**BrickSet:** {'✅ Configured' if BRICKSET_API_KEY else '❌ Missing API key in secrets.'}"
@@ -455,9 +457,9 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("Clear today's history", key="btn_clear_history"):
-
         clear_history_today()
         st.success("Cleared.")
+
 
 # =====================
 # Main
@@ -472,26 +474,23 @@ Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 # BrickLink Tab
 with Tabs[0]:
     st.subheader("BrickLink Data")
-    creds_ok = all([
-        BL_CONSUMER_KEY,
-        BL_CONSUMER_SECRET,
-        st.session_state.get("bl_token"),
-        st.session_state.get("bl_token_secret"),
-    ])
+    creds_ok = all([BL_CONSUMER_KEY, BL_CONSUMER_SECRET, BL_TOKEN, BL_TOKEN_SECRET])
     if not creds_ok:
         st.info(
-            "Enter BrickLink Token and Token Secret in the sidebar. "
-            "Consumer key/secret are configured via Streamlit Secrets."
+            "BrickLink keys/tokens are not fully configured. "
+            "Add BRICKLINK_CONSUMER_KEY, BRICKLINK_CONSUMER_SECRET, "
+            "BRICKLINK_TOKEN and BRICKLINK_TOKEN_SECRET to Streamlit Secrets."
         )
     else:
         oauth = OAuth1(
             client_key=BL_CONSUMER_KEY,
             client_secret=BL_CONSUMER_SECRET,
-            resource_owner_key=st.session_state.get("bl_token"),
-            resource_owner_secret=st.session_state.get("bl_token_secret"),
+            resource_owner_key=BL_TOKEN,
+            resource_owner_secret=BL_TOKEN_SECRET,
             signature_method='HMAC-SHA1',
             signature_type='auth_header',
         )
+
 
         with st.expander("BrickLink diagnostics"):
             st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
