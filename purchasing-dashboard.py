@@ -272,28 +272,50 @@ def bl_get(resource: str, oauth: OAuth1, params: Optional[dict] = None, cache_gr
     return _cached_get_json(url, params, oauth, cache_group=cache_group)
 
 
-def bl_get_price_guide(item_type: str, item_no: str, oauth: OAuth1, new_or_used: str = "N") -> Dict[str, Any]:
-    params = {
-        "guide_type": "stock",
-        "new_or_used": new_or_used,
-        "item_type": item_type.upper(),
-        "item_no": item_no,
+from typing import Optional, Dict, Any
+
+def bl_get_price_guide(
+    item_type: str,
+    item_no: str,
+    oauth: OAuth1,
+    guide_type: str = "stock",      # "stock" or "sold"
+    new_or_used: str = "N",         # "N" or "U"
+    country_code: Optional[str] = None,
+    region: Optional[str] = None,
+    currency_code: Optional[str] = None,
+    vat: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    BrickLink 'Get Price Guide' API.
+
+    Docs: GET /items/{type}/{no}/price
+    """
+    item_type = item_type.upper()  # SET, MINIFIG, PART, etc.
+    url = f"https://api.bricklink.com/api/store/v1/items/{item_type}/{item_no}/price"
+
+    params: Dict[str, str] = {
+        "guide_type": guide_type,      # "stock" (default) or "sold"
+        "new_or_used": new_or_used,    # "N" (default) or "U"
     }
-    url = "https://api.bricklink.com/api/store/v1/priceguide"
+    if country_code:
+        params["country_code"] = country_code
+    if region:
+        params["region"] = region
+    if currency_code:
+        params["currency_code"] = currency_code
+    if vat:
+        params["vat"] = vat
+
     r = requests.get(url, params=params, auth=oauth, timeout=20)
     try:
         data = r.json()
     except Exception:
-        data = {"raw": r.text}
+        data = {
+            "meta": {"code": r.status_code, "message": "non-JSON"},
+            "raw_text": r.text[:400],
+        }
     return data
 
-def bl_get_catalog_item(item_type: str, item_no: str, oauth: OAuth1):
-    url = f"https://api.bricklink.com/api/store/v1/items/{item_type.upper()}/{item_no}"
-    r = requests.get(url, auth=oauth, timeout=20)
-    try:
-        return r.json()
-    except:
-        return {"raw": r.text}
 
 
 
@@ -564,14 +586,21 @@ with Tabs[0]:
                         continue
                     meta_info = meta_resp.get("data") or {}
 
-                    # 2) Price guide (stock, new)
-                    price_resp = bl_get_price_guide(item_type, item_no, oauth, new_or_used="N")
+                   # 2) Price guide (current stock, new)
+                    price_resp = bl_get_price_guide(
+                        item_type=item_type,
+                        item_no=item_no,
+                        oauth=oauth,
+                        guide_type="stock",   # current items for sale
+                        new_or_used="N",      # new condition
+                    )
                     price_code = price_resp.get("meta", {}).get("code")
                     if price_code != 200:
                         msg = price_resp.get("meta", {}).get("message", "Unknown error")
                         errors.append(f"{item_type} {item_no}: priceguide error {price_code} – {msg}")
                         continue
                     price_info = price_resp.get("data") or {}
+
 
                     row_payload = {
                         "Name": meta_info.get("name"),
