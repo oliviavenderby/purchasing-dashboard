@@ -276,14 +276,25 @@ def bl_get_price_guide(item_type: str, item_no: str, oauth: OAuth1, new_or_used:
     params = {
         "guide_type": "stock",
         "new_or_used": new_or_used,
-        "item_type": item_type,
+        "item_type": item_type.upper(),
         "item_no": item_no,
     }
-    return bl_get("priceguide", oauth, params=params, cache_group="priceguide")
+    url = "https://api.bricklink.com/api/store/v1/priceguide"
+    r = requests.get(url, params=params, auth=oauth, timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    return data
 
+def bl_get_catalog_item(item_type: str, item_no: str, oauth: OAuth1):
+    url = f"https://api.bricklink.com/api/store/v1/items/{item_type.upper()}/{item_no}"
+    r = requests.get(url, auth=oauth, timeout=20)
+    try:
+        return r.json()
+    except:
+        return {"raw": r.text}
 
-def bl_get_catalog_item(item_type: str, item_no: str, oauth: OAuth1) -> Dict[str, Any]:
-    return bl_get(f"items/{item_type}/{item_no}", oauth, cache_group="items")
 
 
 # =====================
