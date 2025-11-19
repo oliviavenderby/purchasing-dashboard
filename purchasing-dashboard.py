@@ -326,6 +326,7 @@ def brickset_fetch(set_no: str, api_key: str) -> Dict[str, Any]:
 # =====================
 # BrickEconomy helpers
 # =====================
+
 def brickeconomy_fetch_any(
     item_type: str,
     code: str,
@@ -336,36 +337,59 @@ def brickeconomy_fetch_any(
     Fetch BrickEconomy info for either:
       item_type="SET"     and code="75131-1"
       item_type="MINIFIG" and code="sw0001"
+    using the official BrickEconomy API v1.
     """
     item_type = item_type.upper()
-    base = "https://api.brickeconomy.com/v2"
-    if item_type == "SET":
-        url = f"{base}/sets/{code}"
-    elif item_type == "MINIFIG":
-        url = f"{base}/minifigs/{code}"
-    else:
-        return {"error": f"Unsupported type: {item_type}"}
+    base = "https://www.brickeconomy.com/api/v1"
 
-    headers = {"x-api-key": api_key}
-    params = {"currency": currency}
-    r = requests.get(url, headers=headers, params=params, timeout=20)
+    if item_type == "SET":
+        # /set/<set number>
+        url = f"{base}/set/{code}"
+    elif item_type == "MINIFIG":
+        # /minifig/<minifig number>
+        url = f"{base}/minifig/{code}"
+    else:
+        return {"error": f"Unsupported BrickEconomy type: {item_type}"}
+
+    headers = {
+        "accept": "application/json",
+        "x-apikey": api_key,                     # NOTE: header name is x-apikey (no dash)
+        "User-Agent": "ReUseBricksApp/1.0",      # any non-empty UA string is required
+    }
+    params = {}
+    if currency:
+        params["currency"] = currency
+
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=20)
+        r.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        # Avoid crashing the whole app – return a friendly error object instead
+        return {"error": f"Request to BrickEconomy failed: {e.__class__.__name__}"}
+
     try:
         data = r.json()
     except Exception:
-        data = {"meta": {"status": r.status_code}, "raw_text": r.text[:400]}
+        return {"error": "Non-JSON response from BrickEconomy"}
 
+    # BrickEconomy wraps the object inside "data"
     if isinstance(data, dict) and "error" in data:
         return {"error": data["error"]}
 
     info = data.get("data") or {}
+
     name = info.get("name")
     theme = info.get("theme") or info.get("series")
     year = info.get("year")
-    retail = info.get("retail")
+    retail = info.get("retail_price_us") or info.get("retail_price")
     current_new = info.get("current_value_new")
     current_used = info.get("current_value_used")
-    growth_12 = info.get("growth_12m")
-    url_be = info.get("url")
+    growth_12 = info.get("rolling_growth_12months") or info.get("growth_12m")
+    # There isn't a direct "URL" field in the API; construct one from the set/minifig number:
+    if item_type == "SET":
+        url_be = f"https://www.brickeconomy.com/set/{code}"
+    else:
+        url_be = f"https://www.brickeconomy.com/minifig/{code}"
 
     out = {
         "Name": name,
@@ -375,7 +399,7 @@ def brickeconomy_fetch_any(
         "Current Value (New)": current_new,
         "Current Value (Used)": current_used,
         "Growth % (12m)": growth_12,
-        "Currency": currency,
+        "Currency": info.get("currency") or currency,
         "URL": url_be,
         "Type": item_type,
     }
