@@ -343,21 +343,36 @@ def brickset_fetch(set_no: str, api_key: str) -> Dict[str, Any]:
         return {}
 
     url = "https://brickset.com/api/v3.asmx/getSets"
-    params = {
+    payload = {
         "apiKey": api_key,
-        "userHash": "",
+        "userHash": "",  # not needed unless you’re using owned/wanted flags
         "params": json.dumps({"setNumber": set_no_clean}),
     }
-    r = requests.post(url, data=params, timeout=20)
+
     try:
-        data = r.json()
+        r = requests.post(url, data=payload, timeout=20)
+    except requests.exceptions.RequestException as e:
+        return {"_error": f"Request to BrickSet failed: {e.__class__.__name__}"}
+
+    try:
+        resp = r.json()
     except Exception:
-        return {"error": "Non-JSON from BrickSet"}
+        return {"_error": "Non-JSON response from BrickSet"}
 
-    if not isinstance(data, list) or not data:
-        return {"error": "No results from BrickSet"}
+    # Brickset v3 format: {"status":"success","matches":<n>,"sets":[...]}
+    if not isinstance(resp, dict):
+        return {"_error": "Unexpected response from BrickSet"}
 
-    first = data[0]
+    if resp.get("status") != "success":
+        return {"_error": resp.get("message", "BrickSet API error")}
+
+    sets = resp.get("sets") or []
+    if not sets:
+        return {"_error": "No results from BrickSet"}
+
+    first = sets[0]
+    collections = first.get("collections") or {}
+
     return {
         "Set Name (BrickSet)": first.get("name"),
         "Pieces": first.get("pieces"),
@@ -365,9 +380,10 @@ def brickset_fetch(set_no: str, api_key: str) -> Dict[str, Any]:
         "Theme": first.get("theme"),
         "Year": first.get("year"),
         "Rating": first.get("rating"),
-        "Users Owned": first.get("ownedBy"),
-        "Users Wanted": first.get("wantedBy"),
+        "Users Owned": collections.get("ownedBy"),
+        "Users Wanted": collections.get("wantedBy"),
     }
+
 
 
 # =====================
