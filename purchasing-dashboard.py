@@ -612,6 +612,7 @@ with Tabs[0]:
 
 
 # BrickSet Tab
+# BrickSet Tab
 with Tabs[1]:
     st.subheader("BrickSet Data")
     api = BRICKSET_API_KEY
@@ -619,34 +620,44 @@ with Tabs[1]:
         st.info("BrickSet API key is not configured. Add BRICKSET_API_KEY to Streamlit Secrets.")
     else:
         if st.button("Fetch BrickSet Data", key="btn_fetch_bs"):
-            rows = []
-            for s in set_list:
-                log_query(
-                    source="UI:BrickSet:fetch",
-                    set_number=s,
-                    params={"action": "fetch"},
-                    cache_hit=True,
-                    summary="requested",
-                )
-                data = brickset_fetch(s, api)
-                row_payload = {
-                    "Set Name (BrickSet)": data.get("Set Name (BrickSet)"),
-                    "Pieces": data.get("Pieces"),
-                    "Minifigs": data.get("Minifigs"),
-                    "Theme": data.get("Theme"),
-                    "Year": data.get("Year"),
-                    "Rating": data.get("Rating"),
-                    "Users Owned": data.get("Users Owned"),
-                    "Users Wanted": data.get("Users Wanted"),
-                }
-                rows.append({"Set": s, **row_payload})
-                save_result(source="BrickSet:row", set_number=s, params={}, payload=row_payload)
-            if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            if not set_list:
+                st.info("No set numbers entered above.")
+            else:
+                rows = []
+                errors = []
+                for s in set_list:
+                    data = brickset_fetch(s, api)
+                    if "_error" in data:
+                        errors.append(f"{s}: {data['_error']}")
+                        continue
+
+                    row_payload = {
+                        "Set Name (BrickSet)": data.get("Set Name (BrickSet)"),
+                        "Pieces": data.get("Pieces"),
+                        "Minifigs": data.get("Minifigs"),
+                        "Theme": data.get("Theme"),
+                        "Year": data.get("Year"),
+                        "Rating": data.get("Rating"),
+                        "Users Owned": data.get("Users Owned"),
+                        "Users Wanted": data.get("Users Wanted"),
+                    }
+                    rows.append({"Set": s, **row_payload})
+                    save_result(source="BrickSet:row", set_number=s, params={}, payload=row_payload)
+
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                else:
+                    st.warning(
+                        "No BrickSet rows returned."
+                        + ("" if not errors else " Possible reasons:\n- " + "\n- ".join(errors))
+                    )
+
         st.markdown("### History (today)")
         hist_bs = results_today_df("BrickSet:row")
         st.dataframe(
-            hist_bs if not hist_bs.empty else pd.DataFrame(
+            hist_bs
+            if not hist_bs.empty
+            else pd.DataFrame(
                 columns=[
                     "Time (UTC)",
                     "Item",
@@ -662,6 +673,7 @@ with Tabs[1]:
             ),
             use_container_width=True,
         )
+
 
 # BrickEconomy Tab (now supports SET + MINIFIG)
 with Tabs[2]:
