@@ -496,7 +496,6 @@ set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
 Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 
 # BrickLink Tab
-# BrickLink Tab
 with Tabs[0]:
     st.subheader("BrickLink Data")
 
@@ -517,9 +516,10 @@ with Tabs[0]:
             signature_type="auth_header",
         )
 
+        # --- Diagnostics block ---
         with st.expander("BrickLink diagnostics"):
             st.caption(
-                "If you see 401/403 or meta errors, re-create the Access Token using this IP, "
+                "If you see 401/403 or meta errors, recreate the Access Token using this IP, "
                 "or set IP to 0.0.0.0 in BrickLink."
             )
             st.code(f"Server public IP: {get_public_ip()}", language="text")
@@ -532,6 +532,7 @@ with Tabs[0]:
                 st.cache_data.clear()
                 st.success("Cleared API cache.")
 
+        # --- Main fetch button ---
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
             raw_items = parse_set_input(raw_sets)
             if not raw_items:
@@ -543,35 +544,31 @@ with Tabs[0]:
                 for raw in raw_items:
                     item_type, item_no = infer_item_type_and_no(raw)
 
-                    # Catalog info
-                    meta = bl_fetch_metadata(item_type, item_no, oauth)
-                    if "_error" in meta:
-                        errors.append(f"{item_type} {item_no}: {meta['_error']}")
+                    # 1) Catalog metadata
+                    meta_resp = bl_get_catalog_item(item_type, item_no, oauth)
+                    meta_code = meta_resp.get("meta", {}).get("code")
+                    if meta_code != 200:
+                        msg = meta_resp.get("meta", {}).get("message", "Unknown error")
+                        errors.append(f"{item_type} {item_no}: catalog error {meta_code} – {msg}")
                         continue
+                    meta_info = meta_resp.get("data") or {}
 
-                    # Price guide
-                    price = bl_fetch_price(
-                        item_type,
-                        item_no,
-                        oauth,
-                        guide_type="stock",
-                        new_or_used="N",
-                        currency_code=None,
-                        country_code=None,
-                        region=None,
-                        vat=None,
-                    )
-                    if "_error" in price:
-                        errors.append(f"{item_type} {item_no}: {price['_error']}")
+                    # 2) Price guide (stock, new)
+                    price_resp = bl_get_price_guide(item_type, item_no, oauth, new_or_used="N")
+                    price_code = price_resp.get("meta", {}).get("code")
+                    if price_code != 200:
+                        msg = price_resp.get("meta", {}).get("message", "Unknown error")
+                        errors.append(f"{item_type} {item_no}: priceguide error {price_code} – {msg}")
                         continue
+                    price_info = price_resp.get("data") or {}
 
                     row_payload = {
-                        "Name": meta.get("name"),
-                        "Avg Price": price.get("avg_price"),
-                        "Qty Avg Price": price.get("qty_avg_price"),
-                        "Min": price.get("min_price"),
-                        "Max": price.get("max_price"),
-                        "Currency": price.get("currency_code"),
+                        "Name": meta_info.get("name"),
+                        "Avg Price": price_info.get("avg_price"),
+                        "Qty Avg Price": price_info.get("qty_avg_price"),
+                        "Min": price_info.get("min_price"),
+                        "Max": price_info.get("max_price"),
+                        "Currency": price_info.get("currency"),
                         "Type": item_type,
                     }
                     rows.append({"Item": item_no, **row_payload})
@@ -585,10 +582,13 @@ with Tabs[0]:
                 if rows:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True)
                 else:
-                    st.warning(
-                        "No BrickLink rows returned."
-                        + ("" if not errors else " Possible reasons:\n- " + "\n- ".join(errors))
-                    )
+                    if errors:
+                        st.warning(
+                            "No BrickLink rows returned. Possible reasons:\n- "
+                            + "\n- ".join(errors)
+                        )
+                    else:
+                        st.warning("No BrickLink rows returned for the given input.")
 
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
@@ -609,6 +609,7 @@ with Tabs[0]:
             ),
             use_container_width=True,
         )
+
 
 
 # BrickSet Tab
