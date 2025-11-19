@@ -496,8 +496,10 @@ set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
 Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 
 # BrickLink Tab
+# BrickLink Tab
 with Tabs[0]:
     st.subheader("BrickLink Data")
+
     creds_ok = all([BL_CONSUMER_KEY, BL_CONSUMER_SECRET, BL_TOKEN, BL_TOKEN_SECRET])
     if not creds_ok:
         st.info(
@@ -511,16 +513,18 @@ with Tabs[0]:
             client_secret=BL_CONSUMER_SECRET,
             resource_owner_key=BL_TOKEN,
             resource_owner_secret=BL_TOKEN_SECRET,
-            signature_method='HMAC-SHA1',
-            signature_type='auth_header',
+            signature_method="HMAC-SHA1",
+            signature_type="auth_header",
         )
 
-
         with st.expander("BrickLink diagnostics"):
-            st.caption("If you see 401/403 or meta errors, (re)create the Access Token using this IP, or set IP to 0.0.0.0.")
+            st.caption(
+                "If you see 401/403 or meta errors, re-create the Access Token using this IP, "
+                "or set IP to 0.0.0.0 in BrickLink."
+            )
             st.code(f"Server public IP: {get_public_ip()}", language="text")
             if st.button("Test BrickLink connection", key="btn_bl_diag"):
-                code, headers, body = bl_raw_get("items/SET/75131-1", oauth)
+                code, headers, body = bl_raw_get("items/SET/10236-1", oauth)
                 st.write("Status:", code)
                 st.write("Headers:", headers)
                 st.json(body)
@@ -529,88 +533,83 @@ with Tabs[0]:
                 st.success("Cleared API cache.")
 
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
-            rows = []
-            # Parse raw input individually, inferring item type (SET/MINIFIG).
-            for raw in parse_set_input(raw_sets):
-                item_type, item_no = infer_item_type_and_no(raw)
-                if not item_no:
-                    continue
-                log_query(
-                    source="UI:BrickLink:fetch",
-                    set_number=item_no,
-                    params={"item_type": item_type},
-                    cache_hit=True,
-                    summary="requested",
-                )
-                meta = bl_get_catalog_item(item_type, item_no, oauth)
-                price = bl_get_price_guide(item_type, item_no, oauth)
-                meta_info = meta.get("data") or {}
-                price_info = price.get("data") or {}
-                if "meta" in meta and meta["meta"].get("code") != 200:
+            raw_items = parse_set_input(raw_sets)
+            if not raw_items:
+                st.info("No set or minifig numbers entered above.")
+            else:
+                rows = []
+                errors = []
+
+                for raw in raw_items:
+                    item_type, item_no = infer_item_type_and_no(raw)
+
+                    # Catalog info
+                    meta = bl_fetch_metadata(item_type, item_no, oauth)
+                    if "_error" in meta:
+                        errors.append(f"{item_type} {item_no}: {meta['_error']}")
+                        continue
+
+                    # Price guide
+                    price = bl_fetch_price(
+                        item_type,
+                        item_no,
+                        oauth,
+                        guide_type="stock",
+                        new_or_used="N",
+                        currency_code=None,
+                        country_code=None,
+                        region=None,
+                        vat=None,
+                    )
+                    if "_error" in price:
+                        errors.append(f"{item_type} {item_no}: {price['_error']}")
+                        continue
+
                     row_payload = {
-                        "Name": None,
-                        "Avg Price": None,
-                        "Qty Avg Price": None,
-                        "Min": None,
-                        "Max": None,
-                        "Currency": None,
+                        "Name": meta.get("name"),
+                        "Avg Price": price.get("avg_price"),
+                        "Qty Avg Price": price.get("qty_avg_price"),
+                        "Min": price.get("min_price"),
+                        "Max": price.get("max_price"),
+                        "Currency": price.get("currency_code"),
                         "Type": item_type,
                     }
+                    rows.append({"Item": item_no, **row_payload})
+                    save_result(
+                        source="BrickLink:row",
+                        set_number=item_no,
+                        params={"item_type": item_type},
+                        payload=row_payload,
+                    )
+
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
                 else:
-                    row_payload = {
-                        "Name": meta_info.get("name"),
-                        "Avg Price": price_info.get("avg_price"),
-                        "Qty Avg Price": price_info.get("qty_avg_price"),
-                        "Min": price_info.get("min_price"),
-                        "Max": price_info.get("max_price"),
-                        "Currency": price_info.get("currency"),
-                        "Type": item_type,
-                    }
-                rows.append({"Set": item_no, **row_payload})
-                save_result(
-                    source="BrickLink:row",
-                    set_number=item_no,
-                    params={"item_type": item_type},
-                    payload=row_payload,
-                )
-
-            if rows:
-                df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True)
-
-                with st.expander("Raw price_detail data for first row"):
-                    first_item = rows[0]["Set"]
-                    params_pg = {
-                        "guide_type": "stock",
-                        "new_or_used": "N",
-                        "item_type": infer_item_type_and_no(first_item)[0],
-                        "item_no": first_item,
-                    }
-                    resp_pg = bl_get("priceguide", oauth, params=params_pg, cache_group="priceguide-debug")
-                    pd_rows = resp_pg.get("data", {}).get("price_detail", [])
-                    if pd_rows:
-                        df_pg = pd.DataFrame(pd_rows)
-                        df_pg = df_pg.rename(columns={
-                            "quantity": "Quantity",
-                            "unit_price": "Unit Price",
-                            "currency_code": "Currency",
-                            "shipping_available": "Shipping",
-                            "seller_country_code": "Seller Country",
-                            "buyer_country_code": "Buyer Country",
-                            "date_ordered": "Date Ordered",
-                        })
-                        st.dataframe(df_pg, use_container_width=True)
-                    else:
-                        st.info("No price_detail returned for the current parameters.")
+                    st.warning(
+                        "No BrickLink rows returned."
+                        + ("" if not errors else " Possible reasons:\n- " + "\n- ".join(errors))
+                    )
 
         st.markdown("### History (today)")
         hist_bl = results_today_df("BrickLink:row")
         st.dataframe(
-            hist_bl if not hist_bl.empty else pd.DataFrame(
-                columns=["Time (UTC)", "Item", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
+            hist_bl
+            if not hist_bl.empty
+            else pd.DataFrame(
+                columns=[
+                    "Time (UTC)",
+                    "Item",
+                    "Name",
+                    "Avg Price",
+                    "Qty Avg Price",
+                    "Min",
+                    "Max",
+                    "Currency",
+                ]
             ),
             use_container_width=True,
         )
+
 
 # BrickSet Tab
 with Tabs[1]:
