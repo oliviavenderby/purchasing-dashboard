@@ -110,8 +110,13 @@ def save_result(
     set_number: str,
     params: Optional[Dict[str, Any]],
     payload: Dict[str, Any],
+    cache_hit: bool = False,
+    summary: Optional[str] = None,
 ):
-    """Upsert into results_store keyed by (source,set_number,params_hash)."""
+    """
+    Upsert into results_store keyed by (source,set_number,params_hash),
+    and ensure a matching row exists in query_log for history joins.
+    """
     key_hash = _hash_params(params)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -124,6 +129,7 @@ def save_result(
     )
     row = c.fetchone()
     payload_json = json.dumps(payload)
+    ts_now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if row:
         c.execute(
             """
@@ -131,11 +137,7 @@ def save_result(
             SET ts_utc=?, payload_json=?
             WHERE id=?
             """,
-            (
-                datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                payload_json,
-                row[0],
-            ),
+            (ts_now, payload_json, row[0]),
         )
     else:
         c.execute(
@@ -143,16 +145,19 @@ def save_result(
             INSERT INTO results_store (ts_utc, source, set_number, params_hash, payload_json)
             VALUES (?,?,?,?,?)
             """,
-            (
-                datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                source,
-                set_number,
-                key_hash,
-                payload_json,
-            ),
+            (ts_now, source, set_number, key_hash, payload_json),
         )
     conn.commit()
     conn.close()
+
+    # Make sure history has something to join against
+    log_query(
+        source=source,
+        set_number=set_number,
+        params=params,
+        cache_hit=cache_hit,
+        summary=summary,
+    )
 
 
 def results_today_df(source_prefix: str) -> pd.DataFrame:
@@ -385,7 +390,6 @@ def brickset_fetch(set_no: str, api_key: str) -> Dict[str, Any]:
     }
 
 
-
 # =====================
 # BrickEconomy helpers
 # =====================
@@ -461,6 +465,7 @@ def brickeconomy_fetch_any(
         "Type": item_type,
     }
 
+    # This is fine to keep as an extra UI-level log
     log_query(
         source=f"BrickEconomy:{item_type}",
         set_number=code,
@@ -637,6 +642,8 @@ with Tabs[0]:
                         set_number=item_no,
                         params={"item_type": item_type},
                         payload=row_payload,
+                        cache_hit=False,
+                        summary=row_payload.get("Name"),
                     )
 
                 if rows:
@@ -707,6 +714,8 @@ with Tabs[1]:
                         set_number=s,
                         params={},
                         payload=row_payload,
+                        cache_hit=False,
+                        summary=row_payload.get("Set Name (BrickSet)"),
                     )
 
                 if rows:
@@ -755,6 +764,7 @@ with Tabs[2]:
                 item_type, item_no = infer_item_type_and_no(raw)
                 if not item_no:
                     continue
+                # Optional extra UI log; doesn't affect history join
                 log_query(
                     source="UI:BrickEconomy:fetch",
                     set_number=item_no,
@@ -769,6 +779,8 @@ with Tabs[2]:
                     set_number=item_no,
                     params={"type": item_type},
                     payload=data,
+                    cache_hit=False,
+                    summary=data.get("Name"),
                 )
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
@@ -832,6 +844,8 @@ with Tabs[3]:
                 set_number=s,
                 params={},
                 payload=row_payload,
+                cache_hit=False,
+                summary=f"Score {score_val:.2f}",
             )
 
         df_scores = pd.DataFrame(scores)
