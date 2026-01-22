@@ -1,12 +1,13 @@
 # purchasing_dashboard.py
 # LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
+# UPDATED: History now shows a rolling 7-day window (configurable) instead of "today" only.
 
 import os
 import json
 import sqlite3
 import hashlib
 import re
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Optional, List, Dict, Any
 
 import requests
@@ -160,9 +161,14 @@ def save_result(
     )
 
 
-def results_today_df(source_prefix: str) -> pd.DataFrame:
-    """Return today's results for a given source prefix, joined with query_log."""
-    today_str = date.today().isoformat()
+def results_last_n_days_df(source_prefix: str, days: int = 7) -> pd.DataFrame:
+    """
+    Return last N days of results for a given source prefix, joined with query_log.
+    Uses a rolling window in UTC based on the stored ISO ts_utc values.
+    """
+    start_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    start_iso = start_dt.isoformat(timespec="seconds")
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -179,13 +185,14 @@ def results_today_df(source_prefix: str) -> pd.DataFrame:
          AND r.set_number = q.set_number
          AND r.params_hash = q.params_hash
         WHERE r.source LIKE ?
-          AND substr(q.ts_utc,1,10) = ?
+          AND q.ts_utc >= ?
         ORDER BY q.ts_utc DESC
         """,
-        (f"{source_prefix}%", today_str),
+        (f"{source_prefix}%", start_iso),
     )
     rows = c.fetchall()
     conn.close()
+
     records = []
     for ts_utc, src, set_number, p_hash, payload_json in rows:
         try:
@@ -199,16 +206,30 @@ def results_today_df(source_prefix: str) -> pd.DataFrame:
             **payload,
         }
         records.append(rec)
+
     return pd.DataFrame(records)
 
 
 def clear_history_today():
-    """Delete today's query_log + results_store rows."""
+    """Delete today's query_log + results_store rows (UTC date)."""
     today_str = date.today().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM query_log WHERE substr(ts_utc,1,10)=?", (today_str,))
     c.execute("DELETE FROM results_store WHERE substr(ts_utc,1,10)=?", (today_str,))
+    conn.commit()
+    conn.close()
+
+
+def clear_history_last_n_days(days: int = 7):
+    """Delete query_log + results_store rows from the last N rolling days (UTC)."""
+    start_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    start_iso = start_dt.isoformat(timespec="seconds")
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM query_log WHERE ts_utc >= ?", (start_iso,))
+    c.execute("DELETE FROM results_store WHERE ts_utc >= ?", (start_iso,))
     conn.commit()
     conn.close()
 
@@ -540,9 +561,26 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    if st.button("Clear today's history", key="btn_clear_history"):
-        clear_history_today()
-        st.success("Cleared.")
+
+    history_days = st.number_input(
+        "History window (days)",
+        min_value=1,
+        max_value=30,
+        value=7,
+        step=1,
+        help="History tables show queries/results from the last N days (rolling, UTC).",
+        key="history_days",
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Clear today", key="btn_clear_history_today"):
+            clear_history_today()
+            st.success("Cleared today (UTC).")
+    with col_b:
+        if st.button("Clear last N days", key="btn_clear_history_ndays"):
+            clear_history_last_n_days(int(history_days))
+            st.success(f"Cleared last {int(history_days)} day(s).")
 
 
 # =====================
@@ -657,8 +695,8 @@ with Tabs[0]:
                     else:
                         st.warning("No BrickLink rows returned for the given input.")
 
-        st.markdown("### History (today)")
-        hist_bl = results_today_df("BrickLink:row")
+        st.markdown(f"### History (last {int(history_days)} day(s))")
+        hist_bl = results_last_n_days_df("BrickLink:row", days=int(history_days))
         st.dataframe(
             hist_bl
             if not hist_bl.empty
@@ -726,8 +764,8 @@ with Tabs[1]:
                         + ("" if not errors else " Possible reasons:\n- " + "\n- ".join(errors))
                     )
 
-        st.markdown("### History (today)")
-        hist_bs = results_today_df("BrickSet:row")
+        st.markdown(f"### History (last {int(history_days)} day(s))")
+        hist_bs = results_last_n_days_df("BrickSet:row", days=int(history_days))
         st.dataframe(
             hist_bs
             if not hist_bs.empty
@@ -784,8 +822,9 @@ with Tabs[2]:
                 )
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
-        st.markdown("### History (today)")
-        hist_be = results_today_df("BrickEconomy:row")
+
+        st.markdown(f"### History (last {int(history_days)} day(s))")
+        hist_be = results_last_n_days_df("BrickEconomy:row", days=int(history_days))
         st.dataframe(
             hist_be
             if not hist_be.empty
@@ -855,8 +894,8 @@ with Tabs[3]:
             use_container_width=True,
         )
 
-    st.markdown("### History (today – Scoring)")
-    hist_sc = results_today_df("Scoring:row")
+    st.markdown(f"### History (last {int(history_days)} day(s) – Scoring)")
+    hist_sc = results_last_n_days_df("Scoring:row", days=int(history_days))
     st.dataframe(
         hist_sc
         if not hist_sc.empty
@@ -867,6 +906,6 @@ with Tabs[3]:
     )
 
 st.markdown(
-    "<small>Cache TTL: 24h. History shows today's queries whether they hit cache or not.</small>",
+    f"<small>Cache TTL: 24h. History shows the last {int(history_days)} day(s) of queries (rolling window, UTC).</small>",
     unsafe_allow_html=True,
 )
