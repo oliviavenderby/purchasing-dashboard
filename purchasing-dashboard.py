@@ -876,10 +876,10 @@ with Tabs[3]:
 
     # Weights: demand + growth drive the score; rating supports; price is a tiny tier hint.
     WEIGHTS = {
-        "demand": 0.45,
-        "growth": 0.35,
-        "rating": 0.15,
-        "price_tier": 0.05,
+        "demand": 0.40,
+        "growth": 0.30,
+        "rating": 0.20,
+        "price_tier": 0.10,
     }
 
     # Demand smoothing + anchors (ratio wanted/owned after smoothing)
