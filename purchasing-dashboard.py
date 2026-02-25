@@ -3,7 +3,7 @@
 # UPDATED: History now shows a rolling 7-day window (configurable) instead of "today" only.
 # UPDATED (Scoring): Adds BrickSet Owned/Wanted ratios + Wanted/Owned, displayed as percentages/ratio in UI
 # while saving raw numeric ratios to SQLite history. Final score equation unchanged.
-# UPDATED (Demand): Adds smoothed Demand Index + Demand Score (0-10) for ranking (percentile within current list).
+# UPDATED (Demand): Adds smoothed Demand Index + ABSOLUTE Demand Score (0-10) (stable over time; NOT based on current input list)
 
 import os
 import json
@@ -840,8 +840,21 @@ with Tabs[2]:
 with Tabs[3]:
     st.subheader("Scoring")
 
+    # Brickset total user base used for normalization ratios (can be made configurable later)
     BRICKSET_TOTAL_USERS = 374_621
-    DEMAND_SMOOTHING_K = 50.0  # stabilizes pressure ratio when owned/wanted are small
+
+    # Demand settings (tunable, but stable over time)
+    DEMAND_SMOOTHING_K = 50.0
+    WANTED_SHARE_FOR_10 = 0.02  # 2% wanted share -> max baseline demand
+    PRESSURE_MIN = 0.5          # cap how low pressure can drag the score
+    PRESSURE_MAX = 1.5          # cap how high pressure can boost the score
+
+    def _clip(x: float, lo: float, hi: float) -> float:
+        try:
+            x = float(x)
+        except Exception:
+            return lo
+        return max(lo, min(hi, x))
 
     def _fmt_pct(x: float) -> str:
         try:
@@ -855,7 +868,7 @@ with Tabs[3]:
         except Exception:
             return ""
 
-    def _fmt_num(x: float) -> str:
+    def _fmt_num6(x: float) -> str:
         try:
             return f"{float(x):.6f}"
         except Exception:
@@ -887,14 +900,19 @@ with Tabs[3]:
             except Exception:
                 p, r, v, o, w = 0.0, 0.0, 0.0, 0.0, 0.0
 
-            # Ratios (raw numeric values saved)
+            # Ratios (raw values saved; formatted values displayed)
             owned_ratio = (o / BRICKSET_TOTAL_USERS) if BRICKSET_TOTAL_USERS else 0.0
             wanted_ratio = (w / BRICKSET_TOTAL_USERS) if BRICKSET_TOTAL_USERS else 0.0
             wanted_owned_ratio = (w / o) if o else 0.0
 
-            # Demand metrics (raw values saved)
+            # Demand components
             demand_pressure_smoothed = (w + DEMAND_SMOOTHING_K) / (o + DEMAND_SMOOTHING_K) if (o + DEMAND_SMOOTHING_K) else 0.0
-            demand_index = wanted_ratio * demand_pressure_smoothed  # share * pressure (stable and comparable)
+            demand_index = wanted_ratio * demand_pressure_smoothed
+
+            # ABSOLUTE Demand Score (0-10), stable over time (NOT list-relative)
+            base = _clip(wanted_ratio / WANTED_SHARE_FOR_10, 0.0, 1.0)
+            pressure_factor = _clip(demand_pressure_smoothed, PRESSURE_MIN, PRESSURE_MAX)
+            demand_score_0_10 = _clip(10.0 * base * pressure_factor, 0.0, 10.0)
 
             # Keep final score equation unchanged for now
             score_val = 0.4 * (p / 1000) + 0.4 * r + 0.2 * (v / 100)
@@ -905,11 +923,17 @@ with Tabs[3]:
                 "BrickSet Rating": r,
                 "Users Owned": o,
                 "Users Wanted": w,
+
+                # Raw numeric ratios (saved to SQLite/history)
                 "Owned / Total Users": owned_ratio,
                 "Wanted / Total Users": wanted_ratio,
                 "Wanted / Owned": wanted_owned_ratio,
+
+                # Demand metrics (saved raw)
                 "Demand Pressure (smoothed)": demand_pressure_smoothed,
                 "Demand Index": demand_index,
+                "Demand Score (0-10)": demand_score_0_10,
+
                 "Current Value": v,
                 "Score": score_val,
             }
@@ -926,27 +950,17 @@ with Tabs[3]:
 
         df_scores = pd.DataFrame(scores)
 
-        # Demand Score (0-10): percentile rank within the current input list (best for ranking a collection)
-        if len(df_scores) > 1 and "Demand Index" in df_scores.columns:
-            df_scores["Demand Score (0-10)"] = (
-                df_scores["Demand Index"]
-                .rank(pct=True, method="average")
-                .fillna(0.0)
-                * 10.0
-            )
-        else:
-            df_scores["Demand Score (0-10)"] = 10.0 if len(df_scores) == 1 else 0.0
-
         # UI-only formatted columns (do not save these)
         df_scores["Owned / Total Users (%)"] = df_scores["Owned / Total Users"].apply(_fmt_pct)
         df_scores["Wanted / Total Users (%)"] = df_scores["Wanted / Total Users"].apply(_fmt_pct)
         df_scores["Wanted / Owned (x)"] = df_scores["Wanted / Owned"].apply(_fmt_ratio)
         df_scores["Demand Pressure (smoothed) (x)"] = df_scores["Demand Pressure (smoothed)"].apply(_fmt_ratio)
-        df_scores["Demand Index (raw)"] = df_scores["Demand Index"].apply(_fmt_num)
+        df_scores["Demand Index (raw)"] = df_scores["Demand Index"].apply(_fmt_num6)
         df_scores["Demand Score (0-10)"] = df_scores["Demand Score (0-10)"].apply(_fmt_ratio)
 
         cols = [
             "Set",
+            "Pieces",
             "BrickSet Rating",
             "Users Owned",
             "Users Wanted",
@@ -959,19 +973,16 @@ with Tabs[3]:
             "Current Value",
             "Score",
         ]
-        # Keep pieces available if you want; comment out if you don't:
-        if "Pieces" in df_scores.columns:
-            cols.insert(1, "Pieces")
 
         st.dataframe(
-            df_scores[[c for c in cols if c in df_scores.columns]],
+            df_scores[cols] if all(c in df_scores.columns for c in cols) else df_scores,
             use_container_width=True,
         )
 
     st.markdown(f"### History (last {int(history_days)} day(s) – Scoring)")
     hist_sc = results_last_n_days_df("Scoring:row", days=int(history_days))
 
-    # UI formatting for history too
+    # UI formatting for history too (still based on raw saved ratios)
     if not hist_sc.empty:
         if "Owned / Total Users" in hist_sc.columns:
             hist_sc["Owned / Total Users (%)"] = hist_sc["Owned / Total Users"].apply(_fmt_pct)
@@ -982,7 +993,9 @@ with Tabs[3]:
         if "Demand Pressure (smoothed)" in hist_sc.columns:
             hist_sc["Demand Pressure (smoothed) (x)"] = hist_sc["Demand Pressure (smoothed)"].apply(_fmt_ratio)
         if "Demand Index" in hist_sc.columns:
-            hist_sc["Demand Index (raw)"] = hist_sc["Demand Index"].apply(_fmt_num)
+            hist_sc["Demand Index (raw)"] = hist_sc["Demand Index"].apply(_fmt_num6)
+        if "Demand Score (0-10)" in hist_sc.columns:
+            hist_sc["Demand Score (0-10)"] = hist_sc["Demand Score (0-10)"].apply(_fmt_ratio)
 
         hist_cols = [
             "Time (UTC)",
@@ -996,9 +1009,11 @@ with Tabs[3]:
             "Wanted / Owned (x)",
             "Demand Pressure (smoothed) (x)",
             "Demand Index (raw)",
+            "Demand Score (0-10)",
             "Current Value",
             "Score",
         ]
+        # Older rows won't have new columns; filter safely
         hist_cols = [c for c in hist_cols if c in hist_sc.columns]
         st.dataframe(hist_sc[hist_cols], use_container_width=True)
     else:
@@ -1016,6 +1031,7 @@ with Tabs[3]:
                     "Wanted / Owned (x)",
                     "Demand Pressure (smoothed) (x)",
                     "Demand Index (raw)",
+                    "Demand Score (0-10)",
                     "Current Value",
                     "Score",
                 ]
