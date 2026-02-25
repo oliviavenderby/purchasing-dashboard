@@ -1,6 +1,8 @@
 # purchasing_dashboard.py
 # LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
 # UPDATED: History now shows a rolling 7-day window (configurable) instead of "today" only.
+# UPDATED (Scoring): Adds BrickSet Owned/Wanted ratios + Wanted/Owned, displayed as percentages/ratio in UI
+# while saving raw numeric ratios to SQLite history. Final score equation unchanged.
 
 import os
 import json
@@ -146,7 +148,7 @@ def save_result(
             INSERT INTO results_store (ts_utc, source, set_number, params_hash, payload_json)
             VALUES (?,?,?,?,?)
             """,
-            (ts_now, source, set_number, key_hash, payload_json),
+            (ts_now, source, set_number, key_hash, json.dumps(payload)),
         )
     conn.commit()
     conn.close()
@@ -194,7 +196,7 @@ def results_last_n_days_df(source_prefix: str, days: int = 7) -> pd.DataFrame:
     conn.close()
 
     records = []
-    for ts_utc, src, set_number, p_hash, payload_json in rows:
+    for ts_utc, src, set_number, _p_hash, payload_json in rows:
         try:
             payload = json.loads(payload_json)
         except Exception:
@@ -550,15 +552,9 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Connections status")
-    st.markdown(
-        f"**BrickLink:** {'✅ Connected' if bl_ok else '❌ Missing one or more keys in secrets.'}"
-    )
-    st.markdown(
-        f"**BrickSet:** {'✅ Configured' if BRICKSET_API_KEY else '❌ Missing API key in secrets.'}"
-    )
-    st.markdown(
-        f"**BrickEconomy:** {'✅ Configured' if BRICKECONOMY_API_KEY else '❌ Missing API key in secrets.'}"
-    )
+    st.markdown(f"**BrickLink:** {'✅ Connected' if bl_ok else '❌ Missing one or more keys in secrets.'}")
+    st.markdown(f"**BrickSet:** {'✅ Configured' if BRICKSET_API_KEY else '❌ Missing API key in secrets.'}")
+    st.markdown(f"**BrickEconomy:** {'✅ Configured' if BRICKECONOMY_API_KEY else '❌ Missing API key in secrets.'}")
 
     st.markdown("---")
 
@@ -688,10 +684,7 @@ with Tabs[0]:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True)
                 else:
                     if errors:
-                        st.warning(
-                            "No BrickLink rows returned. Possible reasons:\n- "
-                            + "\n- ".join(errors)
-                        )
+                        st.warning("No BrickLink rows returned. Possible reasons:\n- " + "\n- ".join(errors))
                     else:
                         st.warning("No BrickLink rows returned for the given input.")
 
@@ -701,16 +694,7 @@ with Tabs[0]:
             hist_bl
             if not hist_bl.empty
             else pd.DataFrame(
-                columns=[
-                    "Time (UTC)",
-                    "Item",
-                    "Name",
-                    "Avg Price",
-                    "Qty Avg Price",
-                    "Min",
-                    "Max",
-                    "Currency",
-                ]
+                columns=["Time (UTC)", "Item", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
             ),
             use_container_width=True,
         )
@@ -802,6 +786,7 @@ with Tabs[2]:
                 item_type, item_no = infer_item_type_and_no(raw)
                 if not item_no:
                     continue
+
                 # Optional extra UI log; doesn't affect history join
                 log_query(
                     source="UI:BrickEconomy:fetch",
@@ -848,36 +833,75 @@ with Tabs[2]:
         )
 
 # ---------------------
-# Scoring Tab
+# Scoring Tab (UPDATED)
 # ---------------------
 with Tabs[3]:
     st.subheader("Scoring")
+
+    # Brickset total user base used for normalization ratios (can be made configurable later)
+    BRICKSET_TOTAL_USERS = 374_621
+
+    def _fmt_pct(x: float) -> str:
+        try:
+            return f"{100.0 * float(x):.2f}%"
+        except Exception:
+            return ""
+
+    def _fmt_ratio(x: float) -> str:
+        try:
+            return f"{float(x):.2f}"
+        except Exception:
+            return ""
+
     if st.button("Compute Score (example)", key="btn_score"):
         scores = []
         api_bs = BRICKSET_API_KEY
         api_be = BRICKECONOMY_API_KEY
         cur = BRICKECONOMY_CURRENCY
+
         for s in set_list:
             bs = brickset_fetch(s, api_bs) if api_bs else {}
             be = brickeconomy_fetch_any("SET", s, api_be, cur) if api_be else {}
+
             pieces = (bs or {}).get("Pieces") or 0
             rating = (bs or {}).get("Rating") or 0
+            owned = (bs or {}).get("Users Owned") or 0
+            wanted = (bs or {}).get("Users Wanted") or 0
+
             value = (be or {}).get("Current Value (New)") or (be or {}).get("Current Value") or 0
+
             try:
                 p = float(pieces or 0)
                 r = float(rating or 0)
                 v = float(value or 0)
+                o = float(owned or 0)
+                w = float(wanted or 0)
             except Exception:
-                p, r, v = 0.0, 0.0, 0.0
+                p, r, v, o, w = 0.0, 0.0, 0.0, 0.0, 0.0
+
+            # New metrics (raw values saved; formatted values displayed)
+            owned_ratio = (o / BRICKSET_TOTAL_USERS) if BRICKSET_TOTAL_USERS else 0.0
+            wanted_ratio = (w / BRICKSET_TOTAL_USERS) if BRICKSET_TOTAL_USERS else 0.0
+            wanted_owned_ratio = (w / o) if o else 0.0
+
+            # Keep final score equation unchanged for now
             score_val = 0.4 * (p / 1000) + 0.4 * r + 0.2 * (v / 100)
+
             row_payload = {
                 "Set": s,
                 "Pieces": p,
                 "BrickSet Rating": r,
+                "Users Owned": o,
+                "Users Wanted": w,
+                # Raw numeric ratios (saved to SQLite/history)
+                "Owned / Total Users": owned_ratio,
+                "Wanted / Total Users": wanted_ratio,
+                "Wanted / Owned": wanted_owned_ratio,
                 "Current Value": v,
                 "Score": score_val,
             }
             scores.append(row_payload)
+
             save_result(
                 source="Scoring:row",
                 set_number=s,
@@ -888,7 +912,25 @@ with Tabs[3]:
             )
 
         df_scores = pd.DataFrame(scores)
-        cols = ["Set", "Pieces", "BrickSet Rating", "Current Value", "Score"]
+
+        # UI-only formatted columns (do not save these)
+        df_scores["Owned / Total Users (%)"] = df_scores["Owned / Total Users"].apply(_fmt_pct)
+        df_scores["Wanted / Total Users (%)"] = df_scores["Wanted / Total Users"].apply(_fmt_pct)
+        df_scores["Wanted / Owned (x)"] = df_scores["Wanted / Owned"].apply(_fmt_ratio)
+
+        cols = [
+            "Set",
+            "Pieces",
+            "BrickSet Rating",
+            "Users Owned",
+            "Users Wanted",
+            "Owned / Total Users (%)",
+            "Wanted / Total Users (%)",
+            "Wanted / Owned (x)",
+            "Current Value",
+            "Score",
+        ]
+
         st.dataframe(
             df_scores[cols] if all(c in df_scores.columns for c in cols) else df_scores,
             use_container_width=True,
@@ -896,14 +938,51 @@ with Tabs[3]:
 
     st.markdown(f"### History (last {int(history_days)} day(s) – Scoring)")
     hist_sc = results_last_n_days_df("Scoring:row", days=int(history_days))
-    st.dataframe(
-        hist_sc
-        if not hist_sc.empty
-        else pd.DataFrame(
-            columns=["Time (UTC)", "Item", "Pieces", "BrickSet Rating", "Current Value", "Score"]
-        ),
-        use_container_width=True,
-    )
+
+    # UI formatting for history too (still based on raw saved ratios)
+    if not hist_sc.empty:
+        if "Owned / Total Users" in hist_sc.columns:
+            hist_sc["Owned / Total Users (%)"] = hist_sc["Owned / Total Users"].apply(_fmt_pct)
+        if "Wanted / Total Users" in hist_sc.columns:
+            hist_sc["Wanted / Total Users (%)"] = hist_sc["Wanted / Total Users"].apply(_fmt_pct)
+        if "Wanted / Owned" in hist_sc.columns:
+            hist_sc["Wanted / Owned (x)"] = hist_sc["Wanted / Owned"].apply(_fmt_ratio)
+
+        hist_cols = [
+            "Time (UTC)",
+            "Item",
+            "Pieces",
+            "BrickSet Rating",
+            "Users Owned",
+            "Users Wanted",
+            "Owned / Total Users (%)",
+            "Wanted / Total Users (%)",
+            "Wanted / Owned (x)",
+            "Current Value",
+            "Score",
+        ]
+        # Older rows won't have new columns; filter safely
+        hist_cols = [c for c in hist_cols if c in hist_sc.columns]
+        st.dataframe(hist_sc[hist_cols], use_container_width=True)
+    else:
+        st.dataframe(
+            pd.DataFrame(
+                columns=[
+                    "Time (UTC)",
+                    "Item",
+                    "Pieces",
+                    "BrickSet Rating",
+                    "Users Owned",
+                    "Users Wanted",
+                    "Owned / Total Users (%)",
+                    "Wanted / Total Users (%)",
+                    "Wanted / Owned (x)",
+                    "Current Value",
+                    "Score",
+                ]
+            ),
+            use_container_width=True,
+        )
 
 st.markdown(
     f"<small>Cache TTL: 24h. History shows the last {int(history_days)} day(s) of queries (rolling window, UTC).</small>",
