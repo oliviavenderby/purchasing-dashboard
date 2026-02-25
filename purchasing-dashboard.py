@@ -1,11 +1,10 @@
 # purchasing_dashboard.py
 # LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
 # UPDATED: History now shows a rolling 7-day window (configurable) instead of "today" only.
-# UPDATED (Scoring): Overall Score (0-10) is per-set only (no ranking/batch effects),
+# UPDATED (Scoring): Popularity-focused Overall Score (0-10) per-set only (no ranking/batch effects),
 # computed from BrickSet wanted/owned (smoothed), BrickSet rating, BrickEconomy growth 12m,
-# and BrickLink qty_avg_price (market scarcity/liquidity proxy).
-# Demand Score / Demand Index removed.
-# Scoring "Current Value" column now reflects BrickLink qty_avg_price (used in scoring equation).
+# and BrickLink Avg Price as a *small nudge* (NOT scarcity).
+# NOTE: BrickLink "qty_avg_price" is a quantity-weighted price, not supply; we do NOT treat it as scarcity.
 
 import os
 import json
@@ -369,7 +368,8 @@ def bl_fetch_set_market_signals(set_no: str, oauth: OAuth1) -> Tuple[Dict[str, A
     """
     Fetch BrickLink catalog + price guide for SET set_no.
     Returns (payload, error_message).
-    payload includes qty_avg_price, avg_price, min_price, max_price, currency, name.
+    payload includes avg_price, qty_avg_price, min_price, max_price, currency, name.
+    NOTE: This endpoint does not provide supply quantities/lots; do not treat qty_avg_price as quantity.
     """
     item_type = "SET"
     item_no = set_no
@@ -861,37 +861,36 @@ with Tabs[2]:
         )
 
 # ---------------------
-# Scoring Tab (UPDATED - Overall Score only)
+# Scoring Tab (UPDATED - Popularity-focused)
 # ---------------------
 with Tabs[3]:
     st.subheader("Scoring (Overall Score 0–10)")
 
-    # BrickSet total user base used for normalization ratios
+    # BrickSet total user base used for normalization ratios (display only)
     BRICKSET_TOTAL_USERS = 374_621
 
-    # Scoring weights (per-set only; if a factor is missing, weights are renormalized)
+    # Weights: emphasize demand + growth. Price is only a tiny nudge.
     WEIGHTS = {
-        "pressure": 0.35,   # wanted/owned (smoothed)
-        "scarcity": 0.25,   # BrickLink qty_avg_price (lower qty => more scarce)
-        "growth": 0.25,     # BrickEconomy 12m growth
-        "rating": 0.15,     # BrickSet rating (0-5)
+        "demand": 0.45,   # wanted/owned (smoothed + log)
+        "growth": 0.35,   # BrickEconomy 12m growth
+        "rating": 0.15,   # BrickSet rating (0-5)
+        "price": 0.05,    # BrickLink Avg Price (small nudge, not a primary driver)
     }
 
-    # Pressure smoothing to avoid tiny-owned spikes
-    PRESSURE_SMOOTH_K = 50.0
+    # Demand smoothing to avoid tiny-owned spikes
+    DEMAND_SMOOTH_K = 50.0
 
     # Growth anchors (percent)
     GROWTH_MIN = -20.0
     GROWTH_MAX = 50.0
 
-    # Scarcity anchors (qty_avg_price)
-    QTY_LOW = 2.0
-    QTY_HIGH = 100.0
+    # Demand anchors (ratio)
+    DEMAND_MIN = 0.2
+    DEMAND_MAX = 2.5
 
-    # Pressure anchors (log-scaled mapping)
-    # pressure ~0.2 => ~0, pressure ~2.5 => ~10
-    PRESSURE_MIN = 0.2
-    PRESSURE_MAX = 2.5
+    # Price anchors (Avg Price). Only a nudge; log-scale.
+    PRICE_LOW = 50.0
+    PRICE_HIGH = 2000.0
 
     def _clip(x: float, lo: float, hi: float) -> float:
         try:
@@ -928,38 +927,40 @@ with Tabs[3]:
         except Exception:
             return ""
 
-    def _pressure_score_0_10(wanted: float, owned: float) -> float:
-        # smoothed pressure
-        p = (wanted + PRESSURE_SMOOTH_K) / (owned + PRESSURE_SMOOTH_K) if (owned + PRESSURE_SMOOTH_K) else 0.0
-        p = _clip(p, PRESSURE_MIN, PRESSURE_MAX)
-        # log mapping to spread values nicely
-        lo = math.log(PRESSURE_MIN)
-        hi = math.log(PRESSURE_MAX)
-        val = (math.log(p) - lo) / (hi - lo) if hi != lo else 0.0
+    # --- Subscores (0–10) ---
+
+    def _demand_score_0_10(wanted: float, owned: float) -> float:
+        # Smoothed wanted/owned ratio
+        r = (wanted + DEMAND_SMOOTH_K) / (owned + DEMAND_SMOOTH_K) if (owned + DEMAND_SMOOTH_K) else 0.0
+        r = _clip(r, DEMAND_MIN, DEMAND_MAX)
+
+        # Log mapping so ratios don’t explode
+        lo = math.log(DEMAND_MIN)
+        hi = math.log(DEMAND_MAX)
+        val = (math.log(r) - lo) / (hi - lo) if hi != lo else 0.0
         return _clip(10.0 * val, 0.0, 10.0)
+
+    def _growth_score_0_10(growth_pct: float) -> float:
+        g = _clip(growth_pct, GROWTH_MIN, GROWTH_MAX)
+        return _clip(10.0 * ((g - GROWTH_MIN) / (GROWTH_MAX - GROWTH_MIN)), 0.0, 10.0)
 
     def _rating_score_0_10(rating_0_5: float) -> float:
         return _clip((rating_0_5 / 5.0) * 10.0, 0.0, 10.0)
 
-    def _growth_score_0_10(growth_pct: float) -> float:
-        g = _clip(growth_pct, GROWTH_MIN, GROWTH_MAX)
-        # linear map: -20 -> 0, +50 -> 10
-        return _clip(10.0 * ((g - GROWTH_MIN) / (GROWTH_MAX - GROWTH_MIN)), 0.0, 10.0)
-
-    def _scarcity_score_0_10(qty_avg_price: float) -> float:
-        # Lower qty => higher scarcity. Use log scale.
-        q = _clip(qty_avg_price, QTY_LOW, QTY_HIGH)
-        lo = math.log(QTY_LOW + 1.0)
-        hi = math.log(QTY_HIGH + 1.0)
-        val = (hi - math.log(q + 1.0)) / (hi - lo) if hi != lo else 0.0
+    def _price_score_0_10(avg_price: float) -> float:
+        # Price is only a small nudge; log-scale and clamp.
+        p = _clip(avg_price, PRICE_LOW, PRICE_HIGH)
+        lo = math.log(PRICE_LOW)
+        hi = math.log(PRICE_HIGH)
+        val = (math.log(p) - lo) / (hi - lo) if hi != lo else 0.0
         return _clip(10.0 * val, 0.0, 10.0)
 
     def _overall_score_0_10(subscores: Dict[str, Optional[float]]) -> float:
-        # Renormalize weights over available subscores
+        # Renormalize weights over available subscores (handles missing APIs)
         available = {k: v for k, v in subscores.items() if v is not None}
         if not available:
             return 0.0
-        w_sum = sum(WEIGHTS[k] for k in available.keys() if k in WEIGHTS)
+        w_sum = sum(WEIGHTS.get(k, 0.0) for k in available.keys())
         if w_sum <= 0:
             return 0.0
         total = 0.0
@@ -981,8 +982,9 @@ with Tabs[3]:
         )
 
     st.caption(
-        "Overall Score is computed per set only (no ranking vs other inputs). "
-        "It uses BrickSet wanted/owned + rating, BrickEconomy 12m growth, and BrickLink qty_avg_price."
+        "Overall Score is a 'what’s hot / popular' score. "
+        "Demand (BrickSet wanted/owned) + 12-month Growth (BrickEconomy) drive most of it. "
+        "Rating helps. BrickLink Avg Price is only a tiny nudge (NOT scarcity)."
     )
 
     if st.button("Compute Overall Score", key="btn_score"):
@@ -1001,7 +1003,7 @@ with Tabs[3]:
             if not api_be:
                 st.warning("BrickEconomy API key missing; scoring will have reduced signals.")
             if not oauth_scoring:
-                st.warning("BrickLink keys/tokens missing; scoring will have reduced signals (no qty_avg_price).")
+                st.warning("BrickLink keys/tokens missing; scoring will have reduced signals (no price nudge).")
 
             for s in set_list:
                 # BrickSet
@@ -1019,7 +1021,7 @@ with Tabs[3]:
                 growth = _safe_float((be or {}).get("Growth % (12m)"))
                 be_name = (be or {}).get("Name")
 
-                # BrickLink (fetch fresh for scoring)
+                # BrickLink (price nudge)
                 bl_payload = {}
                 bl_err = None
                 if oauth_scoring:
@@ -1028,33 +1030,33 @@ with Tabs[3]:
                         errors.append(f"{s}: BrickLink error – {bl_err}")
                         bl_payload = {}
 
-                qty_avg_price = _safe_float((bl_payload or {}).get("Qty Avg Price"))
+                avg_price = _safe_float((bl_payload or {}).get("Avg Price"))
                 bl_currency = (bl_payload or {}).get("Currency")
                 bl_name = (bl_payload or {}).get("BrickLink Name")
 
-                # Ratios for display (per-set only)
+                # Ratios for display
                 o = float(owned) if owned is not None else None
                 w = float(wanted) if wanted is not None else None
                 owned_ratio = (o / BRICKSET_TOTAL_USERS) if (o is not None and BRICKSET_TOTAL_USERS) else None
                 wanted_ratio = (w / BRICKSET_TOTAL_USERS) if (w is not None and BRICKSET_TOTAL_USERS) else None
                 wanted_owned_ratio = (w / o) if (w is not None and o not in (None, 0.0)) else None
 
-                # Subscores (0-10), per-set only
+                # Subscores
                 subscores: Dict[str, Optional[float]] = {
-                    "pressure": None,
-                    "rating": None,
+                    "demand": None,
                     "growth": None,
-                    "scarcity": None,
+                    "rating": None,
+                    "price": None,
                 }
 
                 if w is not None and o is not None:
-                    subscores["pressure"] = _pressure_score_0_10(w, o)
-                if rating is not None:
-                    subscores["rating"] = _rating_score_0_10(float(rating))
+                    subscores["demand"] = _demand_score_0_10(w, o)
                 if growth is not None:
                     subscores["growth"] = _growth_score_0_10(float(growth))
-                if qty_avg_price is not None:
-                    subscores["scarcity"] = _scarcity_score_0_10(float(qty_avg_price))
+                if rating is not None:
+                    subscores["rating"] = _rating_score_0_10(float(rating))
+                if avg_price is not None:
+                    subscores["price"] = _price_score_0_10(float(avg_price))
 
                 overall = _overall_score_0_10(subscores)
 
@@ -1062,6 +1064,7 @@ with Tabs[3]:
                     "Set": s,
                     "Name (BrickEconomy)": be_name,
                     "Name (BrickLink)": bl_name,
+
                     "BrickSet Rating": float(rating) if rating is not None else None,
                     "Users Owned": o,
                     "Users Wanted": w,
@@ -1071,16 +1074,15 @@ with Tabs[3]:
 
                     "Growth % (12m)": float(growth) if growth is not None else None,
 
-                    # IMPORTANT: this is what the scoring uses from BrickLink
-                    # User request: "Current Value" should be the BrickLink qty avg price used in the equation.
-                    "Current Value": float(qty_avg_price) if qty_avg_price is not None else None,
+                    # Price nudge (explicitly labeled)
+                    "Avg Market Price (BrickLink)": float(avg_price) if avg_price is not None else None,
                     "BrickLink Currency": bl_currency,
 
-                    # Subscores (for transparency)
-                    "Subscore Pressure (0-10)": subscores["pressure"],
-                    "Subscore Scarcity (0-10)": subscores["scarcity"],
+                    # Subscores
+                    "Subscore Demand (0-10)": subscores["demand"],
                     "Subscore Growth (0-10)": subscores["growth"],
                     "Subscore Rating (0-10)": subscores["rating"],
+                    "Subscore Price Nudge (0-10)": subscores["price"],
 
                     "Overall Score (0-10)": overall,
                 }
@@ -1105,9 +1107,8 @@ with Tabs[3]:
                 df_scores["Wanted / Total Users (%)"] = df_scores["Wanted / Total Users"].apply(_fmt_pct)
             if "Wanted / Owned" in df_scores.columns:
                 df_scores["Wanted / Owned (x)"] = df_scores["Wanted / Owned"].apply(_fmt_ratio)
-
-            if "Current Value" in df_scores.columns:
-                df_scores["Current Value (Qty Avg Price)"] = df_scores["Current Value"].apply(_fmt_num)
+            if "Avg Market Price (BrickLink)" in df_scores.columns:
+                df_scores["Avg Market Price (BrickLink)"] = df_scores["Avg Market Price (BrickLink)"].apply(_fmt_num)
 
             cols = [
                 "Set",
@@ -1120,12 +1121,12 @@ with Tabs[3]:
                 "Wanted / Total Users (%)",
                 "Wanted / Owned (x)",
                 "Growth % (12m)",
-                "Current Value (Qty Avg Price)",
+                "Avg Market Price (BrickLink)",
                 "BrickLink Currency",
-                "Subscore Pressure (0-10)",
-                "Subscore Scarcity (0-10)",
+                "Subscore Demand (0-10)",
                 "Subscore Growth (0-10)",
                 "Subscore Rating (0-10)",
+                "Subscore Price Nudge (0-10)",
                 "Overall Score (0-10)",
             ]
             cols = [c for c in cols if c in df_scores.columns]
@@ -1138,15 +1139,14 @@ with Tabs[3]:
     hist_sc = results_last_n_days_df("Scoring:row", days=int(history_days))
 
     if not hist_sc.empty:
-        # History formatting
         if "Owned / Total Users" in hist_sc.columns:
             hist_sc["Owned / Total Users (%)"] = hist_sc["Owned / Total Users"].apply(_fmt_pct)
         if "Wanted / Total Users" in hist_sc.columns:
             hist_sc["Wanted / Total Users (%)"] = hist_sc["Wanted / Total Users"].apply(_fmt_pct)
         if "Wanted / Owned" in hist_sc.columns:
             hist_sc["Wanted / Owned (x)"] = hist_sc["Wanted / Owned"].apply(_fmt_ratio)
-        if "Current Value" in hist_sc.columns:
-            hist_sc["Current Value (Qty Avg Price)"] = hist_sc["Current Value"].apply(_fmt_num)
+        if "Avg Market Price (BrickLink)" in hist_sc.columns:
+            hist_sc["Avg Market Price (BrickLink)"] = hist_sc["Avg Market Price (BrickLink)"].apply(_fmt_num)
 
         hist_cols = [
             "Time (UTC)",
@@ -1160,12 +1160,12 @@ with Tabs[3]:
             "Wanted / Total Users (%)",
             "Wanted / Owned (x)",
             "Growth % (12m)",
-            "Current Value (Qty Avg Price)",
+            "Avg Market Price (BrickLink)",
             "BrickLink Currency",
-            "Subscore Pressure (0-10)",
-            "Subscore Scarcity (0-10)",
+            "Subscore Demand (0-10)",
             "Subscore Growth (0-10)",
             "Subscore Rating (0-10)",
+            "Subscore Price Nudge (0-10)",
             "Overall Score (0-10)",
         ]
         hist_cols = [c for c in hist_cols if c in hist_sc.columns]
@@ -1185,12 +1185,12 @@ with Tabs[3]:
                     "Wanted / Total Users (%)",
                     "Wanted / Owned (x)",
                     "Growth % (12m)",
-                    "Current Value (Qty Avg Price)",
+                    "Avg Market Price (BrickLink)",
                     "BrickLink Currency",
-                    "Subscore Pressure (0-10)",
-                    "Subscore Scarcity (0-10)",
+                    "Subscore Demand (0-10)",
                     "Subscore Growth (0-10)",
                     "Subscore Rating (0-10)",
+                    "Subscore Price Nudge (0-10)",
                     "Overall Score (0-10)",
                 ]
             ),
