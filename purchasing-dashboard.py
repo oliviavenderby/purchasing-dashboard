@@ -867,42 +867,13 @@ with Tabs[2]:
         )
 
 # ---------------------
-# Scoring Tab (UPDATED - Growth curve + Price Tier)
+# ---------------------
+# Scoring Tab (DATA ONLY – no scoring, keep the same columns as screenshot)
 # ---------------------
 with Tabs[3]:
-    st.subheader("Scoring (Overall Score 0–10)")
+    st.subheader("Scoring (Data Only)")
 
-    BRICKSET_TOTAL_USERS = 374_621  # display only
-
-    # Weights: demand + growth drive the score; rating supports; price is a tiny tier hint.
-    WEIGHTS = {
-        "demand": 0.40,
-        "growth": 0.30,
-        "rating": 0.20,
-        "price_tier": 0.10,
-    }
-
-    # Demand smoothing + anchors (ratio wanted/owned after smoothing)
-    DEMAND_SMOOTH_K = 50.0
-    DEMAND_MIN = 0.2
-    DEMAND_MAX = 2.5  # clip; >=2.5 -> 10/10
-
-    # Growth anchors (rolling 12 months), tuned to what you see in practice:
-    # 0% -> 0, ~10% -> "pretty good", ~20% -> strong, ~30% -> top-tier
-    GROWTH_MIN = 0.0
-    GROWTH_MAX = 30.0
-    GROWTH_CURVE = 0.7  # <1 boosts the middle so 10% feels meaningfully positive
-
-    # Price tier anchors (log-scaled). Prefer BrickEconomy current_value_new; fallback BrickLink Avg Price.
-    PRICE_TIER_LOW = 150.0
-    PRICE_TIER_HIGH = 10_000.0
-
-    def _clip(x: float, lo: float, hi: float) -> float:
-        try:
-            x = float(x)
-        except Exception:
-            return lo
-        return max(lo, min(hi, x))
+    BRICKSET_TOTAL_USERS = 374_621  # used only for Owned/Total and Wanted/Total ratios
 
     def _safe_float(x: Any) -> Optional[float]:
         try:
@@ -912,14 +883,18 @@ with Tabs[3]:
         except Exception:
             return None
 
-    def _fmt_pct(x: float) -> str:
+    def _fmt_pct(x: Any) -> str:
         try:
+            if x is None:
+                return ""
             return f"{100.0 * float(x):.2f}%"
         except Exception:
             return ""
 
-    def _fmt_ratio(x: float) -> str:
+    def _fmt_ratio(x: Any) -> str:
         try:
+            if x is None:
+                return ""
             return f"{float(x):.2f}"
         except Exception:
             return ""
@@ -932,84 +907,44 @@ with Tabs[3]:
         except Exception:
             return ""
 
-    # --- Subscores (0–10) ---
-
-    def _demand_score_0_10(wanted: float, owned: float) -> float:
-        r = (wanted + DEMAND_SMOOTH_K) / (owned + DEMAND_SMOOTH_K) if (owned + DEMAND_SMOOTH_K) else 0.0
-        r = _clip(r, DEMAND_MIN, DEMAND_MAX)
-
-        lo = math.log(DEMAND_MIN)
-        hi = math.log(DEMAND_MAX)
-        val = (math.log(r) - lo) / (hi - lo) if hi != lo else 0.0
-        return _clip(10.0 * val, 0.0, 10.0)
-
-    def _growth_score_0_10(growth_pct: float) -> float:
-        g = _clip(growth_pct, GROWTH_MIN, GROWTH_MAX)
-        g_norm = (g - GROWTH_MIN) / (GROWTH_MAX - GROWTH_MIN) if (GROWTH_MAX > GROWTH_MIN) else 0.0
-        # Curved mapping: boosts mid-range so ~10% doesn't feel "low"
-        return _clip(10.0 * (g_norm ** GROWTH_CURVE), 0.0, 10.0)
-
-    def _rating_score_0_10(rating_0_5: float) -> float:
-        return _clip((rating_0_5 / 5.0) * 10.0, 0.0, 10.0)
-
-    def _price_tier_score_0_10(price: float) -> float:
-        p = _clip(price, PRICE_TIER_LOW, PRICE_TIER_HIGH)
-        lo = math.log(PRICE_TIER_LOW)
-        hi = math.log(PRICE_TIER_HIGH)
-        val = (math.log(p) - lo) / (hi - lo) if hi > lo else 0.0
-        return _clip(10.0 * val, 0.0, 10.0)
-
-    def _overall_score_0_10(subscores: Dict[str, Optional[float]]) -> float:
-        available = {k: v for k, v in subscores.items() if v is not None}
-        if not available:
-            return 0.0
-        w_sum = sum(WEIGHTS.get(k, 0.0) for k in available.keys())
-        if w_sum <= 0:
-            return 0.0
-        total = 0.0
-        for k, v in available.items():
-            total += (WEIGHTS.get(k, 0.0) / w_sum) * float(v)
-        return _clip(total, 0.0, 10.0)
-
-    # BrickLink OAuth setup for scoring fetch
-    bl_creds_ok = all([BL_CONSUMER_KEY, BL_CONSUMER_SECRET, BL_TOKEN, BL_TOKEN_SECRET])
-    oauth_scoring = None
-    if bl_creds_ok:
-        oauth_scoring = OAuth1(
-            client_key=BL_CONSUMER_KEY,
-            client_secret=BL_CONSUMER_SECRET,
-            resource_owner_key=BL_TOKEN,
-            resource_owner_secret=BL_TOKEN_SECRET,
-            signature_method="HMAC-SHA1",
-            signature_type="auth_header",
-        )
-
     st.caption(
-        "Overall Score is a composite 'replacement-strength / importance' score. "
-        "Demand and 12-month growth drive most of it. Rating helps. "
-        "Price is only a small tier hint (prefer BrickEconomy current value; fallback BrickLink avg)."
+        "This tab shows combined BrickSet + BrickEconomy + BrickLink data. "
+        "No Overall Score or subscores—just the underlying numbers."
     )
 
-    if st.button("Compute Overall Score", key="btn_score"):
-        scores: List[Dict[str, Any]] = []
+    if st.button("Fetch Combined Data", key="btn_data_only"):
+        rows: List[Dict[str, Any]] = []
         errors: List[str] = []
 
         api_bs = BRICKSET_API_KEY
         api_be = BRICKECONOMY_API_KEY
         cur = BRICKECONOMY_CURRENCY
 
+        # BrickLink OAuth
+        bl_creds_ok = all([BL_CONSUMER_KEY, BL_CONSUMER_SECRET, BL_TOKEN, BL_TOKEN_SECRET])
+        oauth = None
+        if bl_creds_ok:
+            oauth = OAuth1(
+                client_key=BL_CONSUMER_KEY,
+                client_secret=BL_CONSUMER_SECRET,
+                resource_owner_key=BL_TOKEN,
+                resource_owner_secret=BL_TOKEN_SECRET,
+                signature_method="HMAC-SHA1",
+                signature_type="auth_header",
+            )
+
         if not set_list:
             st.info("No set numbers entered above.")
         else:
             if not api_bs:
-                st.warning("BrickSet API key missing; scoring will have reduced signals.")
+                st.warning("BrickSet API key missing; BrickSet columns may be blank.")
             if not api_be:
-                st.warning("BrickEconomy API key missing; scoring will have reduced signals.")
-            if not oauth_scoring:
-                st.warning("BrickLink keys/tokens missing; scoring will have reduced signals (price tier fallback may be limited).")
+                st.warning("BrickEconomy API key missing; BrickEconomy columns may be blank.")
+            if not oauth:
+                st.warning("BrickLink keys/tokens missing; BrickLink Avg Price may be blank.")
 
             for s in set_list:
-                # --- BrickSet ---
+                # ---- BrickSet ----
                 bs = brickset_fetch(s, api_bs) if api_bs else {}
                 if isinstance(bs, dict) and bs.get("_error"):
                     errors.append(f"{s}: BrickSet error – {bs.get('_error')}")
@@ -1019,108 +954,72 @@ with Tabs[3]:
                 owned = _safe_float((bs or {}).get("Users Owned"))
                 wanted = _safe_float((bs or {}).get("Users Wanted"))
 
-                # --- BrickEconomy ---
-                be = brickeconomy_fetch_any("SET", s, api_be, cur) if api_be else {}
-                growth = _safe_float((be or {}).get("Growth % (12m)"))
-                be_name = (be or {}).get("Name")
-                be_currency = (be or {}).get("Currency")
-                be_current_new = _safe_float((be or {}).get("Current Value (New)"))
+                owned_ratio = (owned / BRICKSET_TOTAL_USERS) if (owned is not None and BRICKSET_TOTAL_USERS) else None
+                wanted_ratio = (wanted / BRICKSET_TOTAL_USERS) if (wanted is not None and BRICKSET_TOTAL_USERS) else None
+                wanted_owned_ratio = (wanted / owned) if (wanted is not None and owned not in (None, 0.0)) else None
 
-                # --- BrickLink (fallback price) ---
-                bl_payload = {}
-                bl_err = None
-                if oauth_scoring:
-                    bl_payload, bl_err = bl_fetch_set_market_signals(s, oauth_scoring)
+                # ---- BrickEconomy ----
+                be = brickeconomy_fetch_any("SET", s, api_be, cur) if api_be else {}
+                be_name = (be or {}).get("Name")
+                growth_12m = _safe_float((be or {}).get("Growth % (12m)"))
+                be_price_new = _safe_float((be or {}).get("Current Value (New)"))
+
+                # ---- BrickLink ----
+                bl_price_avg = None
+                bl_name = None
+                if oauth:
+                    bl_payload, bl_err = bl_fetch_set_market_signals(s, oauth)
                     if bl_err:
                         errors.append(f"{s}: BrickLink error – {bl_err}")
                         bl_payload = {}
-
-                bl_avg_price = _safe_float((bl_payload or {}).get("Avg Price"))
-                bl_currency = (bl_payload or {}).get("Currency")
-                bl_name = (bl_payload or {}).get("BrickLink Name")
-
-                # Choose price for tier:
-                # Prefer BrickEconomy current_value_new, else BrickLink avg_price
-                price_for_tier = be_current_new if (be_current_new is not None and be_current_new > 0) else bl_avg_price
-                price_source = "BrickEconomy current_value_new" if (be_current_new is not None and be_current_new > 0) else ("BrickLink avg_price" if bl_avg_price is not None else None)
-                price_currency = be_currency if (be_current_new is not None and be_current_new > 0) else bl_currency
-
-                # --- Ratios for display ---
-                o = float(owned) if owned is not None else None
-                w = float(wanted) if wanted is not None else None
-                owned_ratio = (o / BRICKSET_TOTAL_USERS) if (o is not None and BRICKSET_TOTAL_USERS) else None
-                wanted_ratio = (w / BRICKSET_TOTAL_USERS) if (w is not None and BRICKSET_TOTAL_USERS) else None
-                wanted_owned_ratio = (w / o) if (w is not None and o not in (None, 0.0)) else None
-
-                # --- Subscores ---
-                subscores: Dict[str, Optional[float]] = {
-                    "demand": None,
-                    "growth": None,
-                    "rating": None,
-                    "price_tier": None,
-                }
-
-                if w is not None and o is not None:
-                    subscores["demand"] = _demand_score_0_10(w, o)
-                if growth is not None:
-                    subscores["growth"] = _growth_score_0_10(float(growth))
-                if rating is not None:
-                    subscores["rating"] = _rating_score_0_10(float(rating))
-                if price_for_tier is not None:
-                    subscores["price_tier"] = _price_tier_score_0_10(float(price_for_tier))
-
-                overall = _overall_score_0_10(subscores)
+                    bl_name = (bl_payload or {}).get("BrickLink Name")
+                    bl_price_avg = _safe_float((bl_payload or {}).get("Avg Price"))
 
                 row_payload = {
                     "Set": s,
                     "Name (BrickEconomy)": be_name,
                     "Name (BrickLink)": bl_name,
 
-                    "BrickSet Rating": float(rating) if rating is not None else None,
-                    "Users Owned": o,
-                    "Users Wanted": w,
+                    "BrickSet Rating": rating,
+                    "Users Owned": owned,
+                    "Users Wanted": wanted,
+
                     "Owned / Total Users": owned_ratio,
                     "Wanted / Total Users": wanted_ratio,
                     "Wanted / Owned": wanted_owned_ratio,
 
-                    "Growth % (12m)": float(growth) if growth is not None else None,
+                    "Growth % (12m)": growth_12m,
 
-                    # Price tier inputs (transparent)
-                    "Price (Tier Signal)": float(price_for_tier) if price_for_tier is not None else None,
-                    "Price Source": price_source,
-                    "Price Currency": price_currency,
-
-                    # Subscores
-                    "Subscore Demand (0-10)": subscores["demand"],
-                    "Subscore Growth (0-10)": subscores["growth"],
-                    "Subscore Rating (0-10)": subscores["rating"],
-                    "Subscore Price Tier (0-10)": subscores["price_tier"],
-
-                    "Overall Score (0-10)": overall,
+                    # Prices (no currency columns)
+                    "BrickEconomy Price (New)": be_price_new,
+                    "BrickLink Avg Price": bl_price_avg,
                 }
 
-                scores.append(row_payload)
+                rows.append(row_payload)
 
                 save_result(
-                    source="Scoring:row",
+                    source="DataOnly:row",
                     set_number=s,
                     params={},
                     payload=row_payload,
                     cache_hit=False,
-                    summary=f"Overall {overall:.2f}",
+                    summary=be_name or bl_name or "",
                 )
 
-            df_scores = pd.DataFrame(scores)
+            df = pd.DataFrame(rows)
 
-            # UI formatted columns
-            if "Owned / Total Users" in df_scores.columns:
-                df_scores["Owned / Total Users (%)"] = df_scores["Owned / Total Users"].apply(_fmt_pct)
-            if "Wanted / Total Users" in df_scores.columns:
-                df_scores["Wanted / Total Users (%)"] = df_scores["Wanted / Total Users"].apply(_fmt_pct)
-            if "Wanted / Owned" in df_scores.columns:
-                df_scores["Wanted / Owned (x)"] = df_scores["Wanted / Owned"].apply(_fmt_ratio)
-            if "Price (Tier Signal)" in df_scores.columns:
-                df_scores["Price (Tier Signal)"] = df_scores["Price (Tier Signal)"].apply(_fmt_num)
+            # Add formatted display columns like your screenshot
+            if "Owned / Total Users" in df.columns:
+                df["Owned / Total Users (%)"] = df["Owned / Total Users"].apply(_fmt_pct)
+            if "Wanted / Total Users" in df.columns:
+                df["Wanted / Total Users (%)"] = df["Wanted / Total Users"].apply(_fmt_pct)
+            if "Wanted / Owned" in df.columns:
+                df["Wanted / Owned (x)"] = df["Wanted / Owned"].apply(_fmt_ratio)
+
+            if "BrickEconomy Price (New)" in df.columns:
+                df["BrickEconomy Price (New)"] = df["BrickEconomy Price (New)"].apply(_fmt_num)
+            if "BrickLink Avg Price" in df.columns:
+                df["BrickLink Avg Price"] = df["BrickLink Avg Price"].apply(_fmt_num)
 
             cols = [
                 "Set",
@@ -1133,33 +1032,31 @@ with Tabs[3]:
                 "Wanted / Total Users (%)",
                 "Wanted / Owned (x)",
                 "Growth % (12m)",
-                "Price (Tier Signal)",
-                "Price Source",
-                "Price Currency",
-                "Subscore Demand (0-10)",
-                "Subscore Growth (0-10)",
-                "Subscore Rating (0-10)",
-                "Subscore Price Tier (0-10)",
-                "Overall Score (0-10)",
+                "BrickEconomy Price (New)",
+                "BrickLink Avg Price",
             ]
-            cols = [c for c in cols if c in df_scores.columns]
-            st.dataframe(df_scores[cols], use_container_width=True)
+            cols = [c for c in cols if c in df.columns]
+            st.dataframe(df[cols], use_container_width=True)
 
             if errors:
                 st.warning("Some rows had missing/failed API signals:\n- " + "\n- ".join(errors))
 
-    st.markdown(f"### History (last {int(history_days)} day(s) – Scoring)")
-    hist_sc = results_last_n_days_df("Scoring:row", days=int(history_days))
+    st.markdown(f"### History (last {int(history_days)} day(s) – Data Only)")
+    hist = results_last_n_days_df("DataOnly:row", days=int(history_days))
 
-    if not hist_sc.empty:
-        if "Owned / Total Users" in hist_sc.columns:
-            hist_sc["Owned / Total Users (%)"] = hist_sc["Owned / Total Users"].apply(_fmt_pct)
-        if "Wanted / Total Users" in hist_sc.columns:
-            hist_sc["Wanted / Total Users (%)"] = hist_sc["Wanted / Total Users"].apply(_fmt_pct)
-        if "Wanted / Owned" in hist_sc.columns:
-            hist_sc["Wanted / Owned (x)"] = hist_sc["Wanted / Owned"].apply(_fmt_ratio)
-        if "Price (Tier Signal)" in hist_sc.columns:
-            hist_sc["Price (Tier Signal)"] = hist_sc["Price (Tier Signal)"].apply(_fmt_num)
+    if not hist.empty:
+        # Apply the same formatting to history
+        if "Owned / Total Users" in hist.columns:
+            hist["Owned / Total Users (%)"] = hist["Owned / Total Users"].apply(_fmt_pct)
+        if "Wanted / Total Users" in hist.columns:
+            hist["Wanted / Total Users (%)"] = hist["Wanted / Total Users"].apply(_fmt_pct)
+        if "Wanted / Owned" in hist.columns:
+            hist["Wanted / Owned (x)"] = hist["Wanted / Owned"].apply(_fmt_ratio)
+
+        if "BrickEconomy Price (New)" in hist.columns:
+            hist["BrickEconomy Price (New)"] = hist["BrickEconomy Price (New)"].apply(_fmt_num)
+        if "BrickLink Avg Price" in hist.columns:
+            hist["BrickLink Avg Price"] = hist["BrickLink Avg Price"].apply(_fmt_num)
 
         hist_cols = [
             "Time (UTC)",
@@ -1173,17 +1070,11 @@ with Tabs[3]:
             "Wanted / Total Users (%)",
             "Wanted / Owned (x)",
             "Growth % (12m)",
-            "Price (Tier Signal)",
-            "Price Source",
-            "Price Currency",
-            "Subscore Demand (0-10)",
-            "Subscore Growth (0-10)",
-            "Subscore Rating (0-10)",
-            "Subscore Price Tier (0-10)",
-            "Overall Score (0-10)",
+            "BrickEconomy Price (New)",
+            "BrickLink Avg Price",
         ]
-        hist_cols = [c for c in hist_cols if c in hist_sc.columns]
-        st.dataframe(hist_sc[hist_cols], use_container_width=True)
+        hist_cols = [c for c in hist_cols if c in hist.columns]
+        st.dataframe(hist[hist_cols], use_container_width=True)
     else:
         st.dataframe(
             pd.DataFrame(
@@ -1199,14 +1090,8 @@ with Tabs[3]:
                     "Wanted / Total Users (%)",
                     "Wanted / Owned (x)",
                     "Growth % (12m)",
-                    "Price (Tier Signal)",
-                    "Price Source",
-                    "Price Currency",
-                    "Subscore Demand (0-10)",
-                    "Subscore Growth (0-10)",
-                    "Subscore Rating (0-10)",
-                    "Subscore Price Tier (0-10)",
-                    "Overall Score (0-10)",
+                    "BrickEconomy Price (New)",
+                    "BrickLink Avg Price",
                 ]
             ),
             use_container_width=True,
