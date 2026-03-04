@@ -2,15 +2,14 @@
 # LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
 # UPDATED: History shows a rolling N-day window (configurable).
 #
-# UPDATED (Scoring): Popularity / Replacement-Strength Overall Score (0–10) per-set only.
-# Factors:
-#   - Demand: BrickSet wanted/owned (smoothed + log)  [most important]
-#   - Growth: BrickEconomy rolling 12-month growth %  [curved mapping, tuned for 0–30% typical range]
-#   - Rating: BrickSet rating (0–5 -> 0–10)
-#   - Price Tier: log-tier signal (prefer BrickEconomy current_value_new; fallback BrickLink avg_price)
+# UPDATED (Scoring): Data-only combined view now supports BOTH SETS + MINIFIGS.
+#   - BrickSet signals are only fetched for SETs (BrickSet has no minifig endpoint in this app).
+#   - BrickEconomy signals are fetched for SET or MINIFIG (using infer_item_type_and_no).
+#   - BrickLink signals are fetched for SET or MINIFIG (catalog + price guide).
+#
 # Notes:
 #   - BrickLink qty_avg_price is a quantity-weighted PRICE, not a supply quantity. We do not treat it as scarcity.
-#   - Price is only a small "tier hint", not a primary driver.
+#   - For minifigs, BrickSet popularity fields will be blank; Scoring tab still works and shows BE/BL data.
 
 import os
 import json
@@ -370,15 +369,14 @@ def bl_get_price_guide(
     return data
 
 
-def bl_fetch_set_market_signals(set_no: str, oauth: OAuth1) -> Tuple[Dict[str, Any], Optional[str]]:
+def bl_fetch_market_signals(item_type: str, item_no: str, oauth: OAuth1) -> Tuple[Dict[str, Any], Optional[str]]:
     """
-    Fetch BrickLink catalog + price guide for SET set_no.
+    Fetch BrickLink catalog + price guide for SET or MINIFIG.
     Returns (payload, error_message).
     payload includes avg_price, qty_avg_price, min_price, max_price, currency, name.
     NOTE: The /price endpoint does not provide supply quantity/lots; do not treat qty_avg_price as quantity.
     """
-    item_type = "SET"
-    item_no = set_no
+    item_type = item_type.upper()
 
     # Catalog metadata
     meta_resp = bl_get_catalog_item(item_type, item_no, oauth)
@@ -503,9 +501,12 @@ def brickeconomy_fetch_any(
 
     try:
         r = requests.get(url, headers=headers, params=params, timeout=20)
-        r.raise_for_status()
     except requests.exceptions.RequestException as e:
         return {"error": f"Request to BrickEconomy failed: {e.__class__.__name__}"}
+
+    if r.status_code != 200:
+        # Make errors actionable (401 vs 404 vs 429 etc.)
+        return {"error": f"BrickEconomy HTTP {r.status_code}: {r.text[:300]}"}
 
     try:
         data = r.json()
@@ -548,7 +549,7 @@ def brickeconomy_fetch_any(
         set_number=code,
         params={"currency": currency},
         cache_hit=True,
-        summary=out["Name"] or "",
+        summary=out.get("Name") or "",
     )
     return out
 
@@ -557,11 +558,25 @@ def brickeconomy_fetch_any(
 # Input parsing helpers
 # =====================
 def normalize_set_number(s: str) -> str:
-    """Add -1 to plain digits that are sets."""
+    """
+    Normalize LEGO set numbers but leave minifigs untouched.
+    Examples:
+        75131 -> 75131-1
+        75131-1 -> 75131-1
+        sh0124 -> sh0124
+        sw0001 -> sw0001
+    """
     if not s:
         return ""
     s = s.strip()
-    return s if "-" in s else f"{s}-1"
+
+    if re.fullmatch(r"\d+", s):
+        return f"{s}-1"
+    if re.fullmatch(r"\d+-\d+", s):
+        return s
+
+    # minifigs / anything else stays as-is
+    return s
 
 
 def parse_set_input(raw: str) -> List[str]:
@@ -577,11 +592,13 @@ def infer_item_type_and_no(raw: str) -> tuple[str, str]:
     "75131-1" -> ("SET", "75131-1")
     "75131"   -> ("SET", "75131-1")
     "sw0001"  -> ("MINIFIG", "sw0001")
+    "sh0124"  -> ("MINIFIG", "sh0124")
     """
     raw = raw.strip()
     if not raw:
         return "SET", ""
 
+    # If starts with letters + digits => minifig code pattern
     m = re.match(r"^([a-zA-Z]+)(\d+)$", raw)
     if m:
         return "MINIFIG", raw.lower()
@@ -634,7 +651,15 @@ with st.sidebar:
 # =====================
 st.title("LEGO Purchasing Assistant")
 raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
-set_list = [normalize_set_number(s) for s in parse_set_input(raw_sets)]
+
+raw_items = parse_set_input(raw_sets)
+
+# SET-only list for BrickSet (and any set-only usage)
+set_list: List[str] = []
+for raw in raw_items:
+    t, n = infer_item_type_and_no(raw)
+    if t == "SET" and n:
+        set_list.append(n)
 
 Tabs = st.tabs(["BrickLink", "BrickSet", "BrickEconomy", "Scoring"])
 
@@ -677,7 +702,6 @@ with Tabs[0]:
                 st.success("Cleared API cache.")
 
         if st.button("Fetch BrickLink Data", key="btn_fetch_bl"):
-            raw_items = parse_set_input(raw_sets)
             if not raw_items:
                 st.info("No set or minifig numbers entered above.")
             else:
@@ -686,12 +710,14 @@ with Tabs[0]:
 
                 for raw in raw_items:
                     item_type, item_no = infer_item_type_and_no(raw)
-
-                    if item_type != "SET":
-                        errors.append(f"{raw}: BrickLink tab currently expects SETs; got {item_type}.")
+                    if not item_no:
                         continue
 
-                    payload, err = bl_fetch_set_market_signals(item_no, oauth)
+                    if item_type not in ("SET", "MINIFIG"):
+                        errors.append(f"{raw}: BrickLink tab supports SET/MINIFIG; got {item_type}.")
+                        continue
+
+                    payload, err = bl_fetch_market_signals(item_type, item_no, oauth)
                     if err:
                         errors.append(f"{item_no}: {err}")
                         continue
@@ -709,7 +735,7 @@ with Tabs[0]:
                     save_result(
                         source="BrickLink:row",
                         set_number=item_no,
-                        params={"item_type": "SET"},
+                        params={"item_type": item_type},
                         payload=row_payload,
                         cache_hit=False,
                         summary=row_payload.get("Name"),
@@ -729,13 +755,13 @@ with Tabs[0]:
             hist_bl
             if not hist_bl.empty
             else pd.DataFrame(
-                columns=["Time (UTC)", "Item", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency"]
+                columns=["Time (UTC)", "Item", "Name", "Avg Price", "Qty Avg Price", "Min", "Max", "Currency", "Type"]
             ),
             use_container_width=True,
         )
 
 # ---------------------
-# BrickSet Tab
+# BrickSet Tab (SETs only)
 # ---------------------
 with Tabs[1]:
     st.subheader("BrickSet Data")
@@ -745,7 +771,7 @@ with Tabs[1]:
     else:
         if st.button("Fetch BrickSet Data", key="btn_fetch_bs"):
             if not set_list:
-                st.info("No set numbers entered above.")
+                st.info("No SET numbers entered above (minifigs are ignored in this tab).")
             else:
                 rows = []
                 errors = []
@@ -806,7 +832,7 @@ with Tabs[1]:
         )
 
 # ---------------------
-# BrickEconomy Tab
+# BrickEconomy Tab (SETs + MINIFIGs)
 # ---------------------
 with Tabs[2]:
     st.subheader("BrickEconomy Data")
@@ -817,7 +843,7 @@ with Tabs[2]:
     else:
         if st.button("Fetch BrickEconomy Data", key="btn_fetch_be"):
             rows = []
-            for raw in parse_set_input(raw_sets):
+            for raw in raw_items:
                 item_type, item_no = infer_item_type_and_no(raw)
                 if not item_no:
                     continue
@@ -837,7 +863,7 @@ with Tabs[2]:
                     params={"type": item_type},
                     payload=data,
                     cache_hit=False,
-                    summary=data.get("Name"),
+                    summary=(data.get("Name") if isinstance(data, dict) else ""),
                 )
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
@@ -861,14 +887,14 @@ with Tabs[2]:
                     "Growth % (12m)",
                     "Currency",
                     "URL",
+                    "error",
                 ]
             ),
             use_container_width=True,
         )
 
 # ---------------------
-# ---------------------
-# Scoring Tab (DATA ONLY – no scoring, keep the same columns as screenshot)
+# Scoring Tab (DATA ONLY – now supports SET + MINIFIG)
 # ---------------------
 with Tabs[3]:
     st.subheader("Scoring (Data Only)")
@@ -909,7 +935,7 @@ with Tabs[3]:
 
     st.caption(
         "This tab shows combined BrickSet + BrickEconomy + BrickLink data. "
-        "No Overall Score or subscores—just the underlying numbers."
+        "Supports SETs and MINIFIGs. BrickSet fields are only available for SETs."
     )
 
     if st.button("Fetch Combined Data", key="btn_data_only"):
@@ -933,8 +959,8 @@ with Tabs[3]:
                 signature_type="auth_header",
             )
 
-        if not set_list:
-            st.info("No set numbers entered above.")
+        if not raw_items:
+            st.info("No set or minifig numbers entered above.")
         else:
             if not api_bs:
                 st.warning("BrickSet API key missing; BrickSet columns may be blank.")
@@ -943,12 +969,18 @@ with Tabs[3]:
             if not oauth:
                 st.warning("BrickLink keys/tokens missing; BrickLink Avg Price may be blank.")
 
-            for s in set_list:
-                # ---- BrickSet ----
-                bs = brickset_fetch(s, api_bs) if api_bs else {}
-                if isinstance(bs, dict) and bs.get("_error"):
-                    errors.append(f"{s}: BrickSet error – {bs.get('_error')}")
-                    bs = {}
+            for raw in raw_items:
+                item_type, item_no = infer_item_type_and_no(raw)
+                if not item_no:
+                    continue
+
+                # ---- BrickSet (SET only) ----
+                bs = {}
+                if item_type == "SET" and api_bs:
+                    bs = brickset_fetch(item_no, api_bs)
+                    if isinstance(bs, dict) and bs.get("_error"):
+                        errors.append(f"{item_no}: BrickSet error – {bs.get('_error')}")
+                        bs = {}
 
                 rating = _safe_float((bs or {}).get("Rating"))
                 owned = _safe_float((bs or {}).get("Users Owned"))
@@ -958,25 +990,34 @@ with Tabs[3]:
                 wanted_ratio = (wanted / BRICKSET_TOTAL_USERS) if (wanted is not None and BRICKSET_TOTAL_USERS) else None
                 wanted_owned_ratio = (wanted / owned) if (wanted is not None and owned not in (None, 0.0)) else None
 
-                # ---- BrickEconomy ----
-                be = brickeconomy_fetch_any("SET", s, api_be, cur) if api_be else {}
-                be_name = (be or {}).get("Name")
-                growth_12m = _safe_float((be or {}).get("Growth % (12m)"))
-                be_price_new = _safe_float((be or {}).get("Current Value (New)"))
+                # ---- BrickEconomy (SET or MINIFIG) ----
+                be = {}
+                be_name = None
+                growth_12m = None
+                be_price_new = None
+                if api_be:
+                    be = brickeconomy_fetch_any(item_type, item_no, api_be, cur)
+                    if isinstance(be, dict) and be.get("error"):
+                        errors.append(f"{item_no}: BrickEconomy error – {be.get('error')}")
+                    be_name = (be or {}).get("Name")
+                    growth_12m = _safe_float((be or {}).get("Growth % (12m)"))
+                    be_price_new = _safe_float((be or {}).get("Current Value (New)"))
 
-                # ---- BrickLink ----
+                # ---- BrickLink (SET or MINIFIG) ----
                 bl_price_avg = None
                 bl_name = None
                 if oauth:
-                    bl_payload, bl_err = bl_fetch_set_market_signals(s, oauth)
+                    bl_payload, bl_err = bl_fetch_market_signals(item_type, item_no, oauth)
                     if bl_err:
-                        errors.append(f"{s}: BrickLink error – {bl_err}")
+                        errors.append(f"{item_no}: BrickLink error – {bl_err}")
                         bl_payload = {}
                     bl_name = (bl_payload or {}).get("BrickLink Name")
                     bl_price_avg = _safe_float((bl_payload or {}).get("Avg Price"))
 
                 row_payload = {
-                    "Set": s,
+                    "Item": item_no,
+                    "Type": item_type,
+
                     "Name (BrickEconomy)": be_name,
                     "Name (BrickLink)": bl_name,
 
@@ -999,8 +1040,8 @@ with Tabs[3]:
 
                 save_result(
                     source="DataOnly:row",
-                    set_number=s,
-                    params={},
+                    set_number=item_no,
+                    params={"type": item_type},
                     payload=row_payload,
                     cache_hit=False,
                     summary=be_name or bl_name or "",
@@ -1022,7 +1063,8 @@ with Tabs[3]:
                 df["BrickLink Avg Price"] = df["BrickLink Avg Price"].apply(_fmt_num)
 
             cols = [
-                "Set",
+                "Item",
+                "Type",
                 "Name (BrickEconomy)",
                 "Name (BrickLink)",
                 "BrickSet Rating",
@@ -1061,6 +1103,7 @@ with Tabs[3]:
         hist_cols = [
             "Time (UTC)",
             "Item",
+            "Type",
             "Name (BrickEconomy)",
             "Name (BrickLink)",
             "BrickSet Rating",
@@ -1081,6 +1124,7 @@ with Tabs[3]:
                 columns=[
                     "Time (UTC)",
                     "Item",
+                    "Type",
                     "Name (BrickEconomy)",
                     "Name (BrickLink)",
                     "BrickSet Rating",
