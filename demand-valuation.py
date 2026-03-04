@@ -1,5 +1,5 @@
-# purchasing_dashboard.py
-# LEGO Purchasing Assistant with 24h caching + per-source History tables + Scoring tab
+# demand-valuation.py
+# LEGO Demand Valuation with 24h caching + per-source History tables + Scoring tab
 # UPDATED: History shows a rolling N-day window (configurable).
 #
 # UPDATED (Scoring): Data-only combined view now supports BOTH SETS + MINIFIGS.
@@ -37,7 +37,7 @@ BRICKSET_API_KEY = st.secrets.get("BRICKSET_API_KEY", "")
 BRICKECONOMY_API_KEY = st.secrets.get("BRICKECONOMY_API_KEY", "")
 BRICKECONOMY_CURRENCY = st.secrets.get("BRICKECONOMY_CURRENCY", "USD") or "USD"
 
-st.set_page_config(page_title="LEGO Purchasing Assistant", layout="wide")
+st.set_page_config(page_title="LEGO Demand Valuation Assistant", layout="wide")
 
 # =====================
 # Query Log + Result Store (SQLite)
@@ -649,7 +649,7 @@ with st.sidebar:
 # =====================
 # Main
 # =====================
-st.title("LEGO Purchasing Assistant")
+st.title("LEGO Demand Valuation Assistant")
 raw_sets = st.text_area("Enter set numbers (comma or newline separated)")
 
 raw_items = parse_set_input(raw_sets)
